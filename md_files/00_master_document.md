@@ -1,6 +1,6 @@
 # SepFP Master Document
 
-> Current implementation snapshot: 2026-04-28.
+> Current implementation snapshot: 2026-04-28 evening.
 > This document describes the implemented SepFP training stack in this checkout, not the older v1 architecture plan.
 
 ## 1. Core Task
@@ -60,8 +60,8 @@ for each active stem s:
   u_s -> LinearMagMaskDecoder
     -> mask_logits_s: (N_s,1,252,256)
 
-sample-wise active-softmax over active stem masks:
-  mask_s = softmax(mask_logits over active stems in the same sample)
+current default mask mode:
+  mask_s = 2.0 * sigmoid(mask_logits_s)   # independent_capped
   pred_s = mask_s * x_linear_mag[idx_s]
 
   u_s -> EvidenceProjector
@@ -76,7 +76,18 @@ sample-wise active-softmax over active stem masks:
 | `src/sepfp/models/stem_head.py` | `SourceQueryEvidenceExtractor` | active-stem evidence extraction using learned stem queries and attention |
 | `src/sepfp/models/sep_decoder.py` | `LinearMagMaskDecoder` | predicts linear-magnitude mask logits from `u_s` only |
 | `src/sepfp/models/projector.py` | `EvidenceProjector` | attention-pools `u_s` and returns normalized `z_s` |
-| `src/sepfp/models/sepfp_model.py` | `SepFPModel` | wires encoder, evidence extractor, decoder, active-softmax masks, and projector |
+| `src/sepfp/models/sepfp_model.py` | `SepFPModel` | wires encoder, evidence extractor, decoder, configurable mask modes, and projector |
+
+### Mask Modes
+
+`SepFPModel` supports four mask modes:
+
+- `independent_capped`: current config default; `mask = max_mask * sigmoid(logits)`, with `max_mask=2.0`.
+- `active_softmax`: older/default comparison mode; active masks sum to one per time-frequency bin in each sample.
+- `independent_sigmoid`: independent `[0, 1]` masks.
+- `independent_softplus`: independent nonnegative masks.
+
+The current research direction moved away from `active_softmax` as the default because it forces every time-frequency bin of mixture energy into the known active stems. `independent_capped` is now the configured default, while `active_softmax` remains useful as an ablation and regression check.
 
 ## 4. Data Pipeline
 
@@ -169,7 +180,11 @@ Current full profile:
 - `max_epochs: 100`
 - `trainer.devices: 2`
 - `trainer.strategy: ddp`
+- `trainer.precision: 32-true`
+- optimizer LR currently configured at `3e-6`
 - `lambda_sep: 100.0`
+- `mask_mode: independent_capped`
+- `max_mask: 2.0`
 - global `batch_size: 8`
 - train split: 208 songs, duplicated 8x per epoch
 - validation split: 32 songs
@@ -180,9 +195,9 @@ Current full profile:
 
 Codex sandbox may not see CUDA even when the host shell does. Verify GPU visibility from the actual training shell before launching the full run.
 
-## 9. Validation Status
+## 9. Validation and Run Status
 
-The current rewrite has passed focused unit and smoke validation:
+The current stack has passed focused unit and smoke validation:
 
 ```bash
 conda run -n sepfp pytest
@@ -195,20 +210,29 @@ Validated contracts include:
 - total loss uses weighted separation and ASID terms
 - active stem outputs have expected shapes
 - absent stems are skipped
-- active-softmax masks sum to one over active stems per sample
+- `active_softmax` masks sum to one over active stems per sample
+- `independent_capped` masks are nonnegative, capped by `max_mask`, and do not force a unit sum
 - `z_s` is normalized
 - one shared training step returns finite `loss`, `sep_loss`, and `asid_loss`
 
+Recent run context:
+
+- `mq31ccx9`: full 100-epoch active-softmax run completed; final summary had `val/loss ~= 3.05`, `val/sep_loss ~= 0.0195`, `val/asid_loss ~= 1.10`.
+- `sepfp-0428-3-lr=3e-6`: full 100-epoch active-softmax run completed; final `val/loss` was worse, mainly from higher `val/asid_loss`.
+- `sepfp-0428-independent-mask`: current independent-capped full run profile; local W&B output shows it was launched on 2x GTX 1080 Ti, but the observed local summary is incomplete in this checkout.
+- `scripts/diagnose_sep_overfit.py`: separation-only diagnostic utility for one-batch and tiny-subset mask-mode comparisons.
+
 Still needed before trusting a long run scientifically:
 
-- real-data one-batch forward/backward from the host GPU shell
 - tiny overfit on a fixed small subset
 - mask visual inspection and scale statistics
 - stem-wise retrieval diagnostics and hubness checks
+- DDP validation logging cleanup: Lightning currently warns that epoch-level validation logs should use `sync_dist=True`.
 
 ## 10. Current Risks
 
-- `active_softmax` forces all mixture magnitude into active stems, including residual/noisy energy.
+- `independent_capped` can under- or over-assign total mixture energy because masks are no longer constrained to sum to one.
+- `active_softmax`, while still supported, forces all mixture magnitude into active stems, including residual/noisy energy.
 - Linear magnitude loss has a larger dynamic range than log-domain loss; scale statistics should be watched early.
 - The validation metric is currently `val/loss`, not a retrieval metric.
 - `others` remains heterogeneous and may be difficult to use as a stable retrieval stem.

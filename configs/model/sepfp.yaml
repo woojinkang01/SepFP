@@ -20,8 +20,7 @@ evidence:
   num_attention_heads: 4
 decoder:
   hidden_channels: 128
-  mask_normalization: active_softmax
-  mask_mode: active_softmax
+  mask_mode: independent_capped
   max_mask: 2.0
 projector:
   hidden_channels: 256

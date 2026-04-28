@@ -12,6 +12,7 @@ Read in this order:
 4. `src/sepfp/models/sepfp_model.py` — model forward path.
 5. `tests/test_linear_mag_contract.py` and `tests/test_shapes.py` — executable contract checks.
 6. `configs/data/full.yaml`, `configs/trainer/full.yaml`, `configs/callbacks/full.yaml`, `configs/logger/wandb.yaml` — full training profile.
+7. `scripts/diagnose_sep_overfit.py` — separation-only mask-mode diagnostics.
 
 Do not start from older v1 assumptions such as `StemHeadBank`, `DirectSkipSepDecoder`, `StemProjector`, ResNet50-IBN, or `2048 -> 256` stem heads. Those were overwritten by the current source-query linear-mask rewrite.
 
@@ -66,7 +67,7 @@ active stem s:
     -> u_s: (N_s,192,63,64)
 
   u_s -> LinearMagMaskDecoder -> mask_logits_s
-  active-softmax over stems in the same sample -> mask_s
+  current default: mask_s = 2.0 * sigmoid(mask_logits_s)
   pred_s = mask_s * x_linear_mag[idx_s]
 
   u_s -> EvidenceProjector -> z_s: normalized (N_s,512)
@@ -108,6 +109,25 @@ positive iff art provenance tokens for stem s intersect ref provenance tokens fo
 
 The implementation averages over stems with valid anchors.
 
+ASID gradient routing is intentionally constrained:
+
+```text
+u_s -> detach -> EvidenceProjector -> z_s -> L_asid
+```
+
+So `L_asid` currently updates the projector only. Encoder, source-query evidence extractor, and decoder are trained directly by `L_sep`.
+
+### Mask Modes
+
+Current config default:
+
+```text
+model.decoder.mask_mode: independent_capped
+model.decoder.max_mask: 2.0
+```
+
+Supported modes are `independent_capped`, `active_softmax`, `independent_sigmoid`, and `independent_softplus`. Treat `active_softmax` as an older/default comparison mode, not the current default. It still has tests because it is useful for ablations and contract checks.
+
 ## Full Training Profile
 
 Configured for 2x GTX 1080 Ti:
@@ -124,6 +144,10 @@ Key settings:
 - `max_epochs: 100`
 - `devices: 2`
 - `strategy: ddp`
+- `precision: 32-true`
+- optimizer LR: `3e-6`
+- `mask_mode: independent_capped`
+- `max_mask: 2.0`
 - `lambda_sep: 100.0`
 - global `batch_size: 8`
 - checkpoint every 10 epochs, best by `val/loss`, and last
@@ -145,22 +169,33 @@ conda run -n sepfp pytest
 
 The full pytest suite checks tensor contracts and finite smoke behavior. It does not prove retrieval quality.
 
+Useful separation diagnostics:
+
+```bash
+conda run -n sepfp python scripts/diagnose_sep_overfit.py --data full --mode one-batch --steps 200 --batch-size 1 --mask-mode independent_capped
+conda run -n sepfp python scripts/diagnose_sep_overfit.py --data full --mode tiny-subset --steps 240 --batch-size 2 --max-examples 8 --mask-mode independent_capped
+```
+
+These runs are diagnostic only. They compare separation behavior, mask scale, target/carrier consistency, and tiny-subset trainability; they do not validate ASID retrieval quality.
+
 ## Common Mistakes
 
 - Do not describe the current encoder as ResNet50-IBN.
 - Do not say decoder output is lognorm VQT.
 - Do not route `z_s` from decoder features, masks, or skip features.
+- Do not describe `active_softmax` as the current default unless the config was changed back.
 - Do not compute absent stems and mask them later; absent stems should be skipped.
 - Do not treat `val/loss` as a final ASID metric.
 - Do not launch long training from Codex if CUDA is not visible in the actual tool environment.
+- Do not treat DDP validation metrics as fully reliable while Lightning is warning that epoch-level validation logs need `sync_dist=True`.
 
 ## Where to Extend Next
 
 High-value next work:
 
-- one-batch real-data DDP smoke from host shell
 - tiny-overfit profile
 - mask visualization and linear magnitude scale logging
 - stem-wise retrieval validation
 - hubness checks for A/B/A+B positives
 - inference-time stem presence strategy
+- DDP validation logging cleanup with explicit `sync_dist=True` and `batch_size`

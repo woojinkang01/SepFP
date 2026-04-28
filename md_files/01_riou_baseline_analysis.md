@@ -44,7 +44,7 @@ x_art[i] = crop(VQT(effect_A(mix_A[i]))) + crop(VQT(effect_B(mix_B[(i-1)%B])))
 
 `roll(1, 0)` 연산으로 batch 내 서로 다른 곡의 stem을 혼합하여, 모델이 다른 곡의 소스와 혼합된 상태에서도 공유 stem을 식별하도록 강제한다.
 
-**SepFP에서의 차용**: 이 전체 batch 구성 로직을 그대로 사용한다.
+**SepFP에서의 차용**: A/B/AB sub-mix와 batch roll 아이디어를 유지한다. 현재 구현은 여기에 stem-level provenance tracking과 separation target 생성을 추가하여, 어떤 stem 성분이 어느 원곡 파일에서 왔는지 loss 계산까지 전달한다.
 
 ### 2.2 InfoNCE with Upper-Diagonal Positive Mask
 
@@ -56,7 +56,7 @@ pos_mask[:-1, 1:].fill_diagonal_(True)
 pos_mask[-1, 0] = True
 ```
 
-**SepFP에서의 변경**: 고정 mask 대신 **stem별 동적 positive mask** (provenance tracking 기반)로 대체한다. 자세한 내용은 마스터 문서 §6.3 참조.
+**SepFP에서의 변경**: 고정 mask 대신 **stem별 동적 positive mask** (provenance tracking 기반)로 대체한다. 현재 구현에서는 `BranchContext.provenance`의 token intersection으로 positive를 정의한다.
 
 ### 2.3 Encoder 구조 — ResNet50-IBN + VQT
 
@@ -85,13 +85,13 @@ bins_per_octave = 36,  crop_size = 18 (= 36//2)
 
 `x_A`와 `x_B`에는 random crop (`i=None`), `x_ref`에는 고정 중앙 crop (`i=crop_size`)을 적용한다.
 
-**SepFP에서의 차용**: 동일 방식 그대로 사용.
+**SepFP에서의 차용**: 동일한 VQT 주파수축 crop 기반 pitch-shift 아이디어를 사용한다. SepFP는 crop 위치를 `BranchContext.crop_meta`에 저장하여 separation target도 같은 위치에서 만든다.
 
 ### 2.5 Time Stretch — Spectrogram 보간
 
 VQT spectrogram의 시간 축을 `F.interpolate(mode='linear')`로 0.7x~1.5x 범위에서 보간한 후 고정 크기로 crop한다.
 
-**SepFP에서의 차용**: 동일 방식 그대로 사용.
+**SepFP에서의 차용**: 동일한 spectrogram interpolation 기반 time-stretch 아이디어를 사용한다. SepFP는 `x_ref`의 stretch factor를 기록하고, 개별 stem target에도 같은 factor를 적용한다.
 
 ### 2.6 Audio Effects — RandomizedPedalboard
 
@@ -106,7 +106,7 @@ Effects 구성 (MoisesDB config):
 - Compressor: p=0.2, threshold -30~0dB, ratio 1/2/4/8/20
 - Gain: p=0.2, ±10dB
 
-**SepFP에서의 차용**: 동일 effects 사용. 추가로 동일 effect 파라미터를 개별 stem에도 적용하여 separation target을 생성한다.
+**SepFP에서의 차용**: 동일한 randomized effect-chain 계열을 사용한다. 추가로 동일 effect 파라미터를 개별 stem에도 replay하여 linear-magnitude separation target을 생성한다.
 
 ---
 
@@ -121,7 +121,7 @@ z(drums+bass) ≈ z_AB (positive)  &&  z(vocals) ≈ z_AB (positive)
 → z(drums+bass) ≈ z(vocals)  (의도치 않은 유사성)
 ```
 
-**SepFP의 해결**: stem별 임베딩으로 분해하여 각 stem 유형이 독립적인 identity space를 가지도록 한다.
+**SepFP의 해결**: stem별 evidence `u_s`와 retrieval embedding `z_s`로 분해하여 각 stem 유형이 독립적인 identity space를 가지도록 한다. 현재 `z_s`는 `u_s`에서 나오지만, ASID gradient는 projector 입력에서 detach되어 projector만 직접 업데이트한다.
 
 ### 3.2 Upper-Diagonal Mask의 논리적 부담
 
@@ -133,7 +133,7 @@ z(drums+bass) ≈ z_AB (positive)  &&  z(vocals) ≈ z_AB (positive)
 
 Riou의 코드에서 `num_heads` 파라미터는 항상 1로 사용되며, 주석은 `"old secret experiments 👀"`라고 기술한다. 이는 다중 헤드 실험이 이전에 시도되었을 가능성을 시사하나, 확증은 아니다.
 
-SepFP의 stem-specific head는 Riou의 generic multi-head와 근본적으로 다르다: 각 head가 `L_sep`를 통해 **명시적 separation supervision**을 받으므로, supervision 부재로 인한 head collapse가 방지된다.
+SepFP의 stem-specific path는 Riou의 generic multi-head와 근본적으로 다르다: 각 active stem path가 `L_sep`를 통해 **명시적 separation supervision**을 받는다. 현재 구현에서는 source-query evidence extractor가 `u_s`를 만들고, decoder는 `u_s`만으로 linear-magnitude mask logits를 예측한다.
 
 ---
 
@@ -150,3 +150,4 @@ SepFP의 stem-specific head는 Riou의 generic multi-head와 근본적으로 다
 | Contrastive loss 구조 | `contrastive_loss.py` | stem별 버전으로 확장 |
 | 학습 가능 temperature (0.01 초기화) | `sample_id.py` | 그대로 사용 |
 | Sub-mix partition + roll | `cached_dataset.py` + `sample_id.py` | 그대로 사용 + provenance tracking 추가 |
+| Mask normalization | 해당 없음 | 현재 기본값은 `independent_capped` (`2.0 * sigmoid`); `active_softmax`는 ablation으로 유지 |

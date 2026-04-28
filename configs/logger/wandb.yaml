@@ -1,7 +1,7 @@
 wandb:
   _target_: lightning.pytorch.loggers.wandb.WandbLogger
   project: sepfp
-  name: sepfp-0428-3-lr=3e-6
+  name: sepfp-0428-independent-mask
   save_dir: .
   offline: false
   log_model: false

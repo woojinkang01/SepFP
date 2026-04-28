@@ -4,16 +4,16 @@
 > stem-level positive/negative mask를 어떻게 구성하는지, 전체 training step의 흐름을 정의한다.
 > 
 > **전제**: Riou의 데이터 파이프라인(sub-mix 생성, VQT, pitch/time augmentation)을 그대로 차용한다.
-> 변경 사항은 모델 구조와 loss 계산에 국한된다.
+> 변경 사항은 모델 구조, stem-level provenance, separation target, loss routing에 집중된다.
 
 ---
 
 ## 1. Riou와 SepFP의 핵심 차이
 
 Riou는 하나의 입력에 대해 단일 전역 임베딩 `z ∈ R^{2048}`을 출력한다.
-SepFP는 하나의 입력에 대해 **활성 stem별** 임베딩 `{z_s | s ∈ active_stems}`을 출력한다.
+SepFP는 하나의 입력에 대해 **활성 stem별** evidence map과 임베딩 `{u_s, z_s | s ∈ active_stems}`을 출력한다.
 
-따라서 Riou의 곡-단위 positive/negative는 SepFP에서 **stem-단위 positive/negative**로 세분화되어야 한다. 이를 위해 **provenance tracking**(각 stem이 어느 원곡에서 유래했는지 추적)이 필요하다.
+따라서 Riou의 곡-단위 positive/negative는 SepFP에서 **stem-단위 positive/negative**로 세분화되어야 한다. 이를 위해 **provenance tracking**(각 stem이 어느 원곡 stem 파일에서 유래했는지 추적)이 필요하다.
 
 ---
 
@@ -21,8 +21,7 @@ SepFP는 하나의 입력에 대해 **활성 stem별** 임베딩 `{z_s | s ∈ a
 
 ### 2.1 데이터 로더 출력 확장
 
-Riou의 데이터 로더는 `(mix_A, mix_B, mix_AB)`를 반환한다.
-SepFP에서는 다음을 추가로 반환한다:
+현재 SepFP 데이터 로더는 preprocessed MoisesDB metadata/audio를 읽어 waveform-level `(mix_A, mix_B, mix_AB)`와 stem/provenance 정보를 반환한다:
 
 ```python
 return (mix_A, mix_B, mix_AB,
@@ -31,7 +30,13 @@ return (mix_A, mix_B, mix_AB,
         stem_types_AB,      # list[set]: 각 sample의 전체 활성 stem 유형
         individual_stems_A, # dict[stem_type → audio]: A에 포함된 개별 stem (separation target용)
         individual_stems_B,
-        individual_stems_AB)
+        individual_stems_AB,
+        effect_params_A,
+        effect_params_B,
+        effect_params_AB,
+        provenance_A,
+        provenance_B,
+        provenance_AB)
 ```
 
 ### 2.2 Training Step에서의 Provenance 계산
@@ -225,12 +230,36 @@ def shared_step(batch):
                 z_ref[(i,s)] = g_s(u_ref[(i,s)])
 
     # ── Stage 4: Loss ──
-    pred_linear = linear_mag_masks(u_art, u_ref) * branch.x_linear_mag
+    mask = mask_from_logits(mask_logits, mode="independent_capped", max_mask=2.0)
+    pred_linear = mask * branch.x_linear_mag
     L_sep = compute_separation_loss(pred_linear, sep_targets_linear)
     L_asid = compute_contrastive_loss(z_art, z_ref, stem_types_A, stem_types_B)
 
     return λ_sep * L_sep + λ_asid * L_asid
 ```
+
+현재 기본 objective는:
+
+```text
+loss = 100.0 * L_sep + lambda_asid(epoch) * L_asid
+```
+
+`lambda_asid`는 warmup 후 1.0에 도달한다. `z_s`는 `u_s`에서 계산되지만 projector 입력에서 `u_s.detach()`가 적용되므로, 현재 `L_asid`는 encoder/evidence/decoder를 직접 업데이트하지 않고 projector만 업데이트한다.
+
+### 6.1 Current Mask Policy
+
+초기 rewrite 문서에서는 `active_softmax`를 기본 mask normalization으로 다뤘지만, 현재 config의 기본값은 `independent_capped`이다.
+
+```text
+mask_s = 2.0 * sigmoid(mask_logits_s)
+pred_s = mask_s * x_linear_mag
+```
+
+의미:
+
+- active stems 사이의 mask 합이 1일 필요가 없다.
+- 한 time-frequency bin에서 여러 stem이 같은 carrier energy를 일부 공유하거나, 총합이 carrier보다 작거나 클 수 있다.
+- `active_softmax`는 여전히 지원되지만 현재는 comparison/ablation 대상이다.
 
 ---
 
@@ -238,12 +267,14 @@ def shared_step(batch):
 
 | 항목 | Riou | SepFP |
 |---|---|---|
-| 모델 출력 | 단일 z ∈ R^{2048} | stem별 z_s ∈ R^{D_z} (활성 stem만) |
+| 모델 출력 | 단일 z ∈ R^{2048} | stem별 `u_s`, `pred_s`, `z_s` (활성 stem만) |
 | Positive mask | 고정 (diagonal + upper-diagonal) | **stem별 동적 mask** (provenance 기반) |
 | Sim matrix 크기 | B × B (단일) | **B_active × B_active (stem별, 가변)** |
-| Loss 항목 | InfoNCE 1개 | S개 InfoNCE + S개 L_sep |
+| Loss 항목 | InfoNCE 1개 | stem별 InfoNCE + stem별 L_sep |
 | Skip logic | 없음 | **stem 부재 → head 비활성** |
 | Multi-positive | upper-diag로 최대 2개 | provenance 기반, 0~2개 |
+| ASID gradient | 전역 encoder로 전달 | 현재는 projector-only |
+| Mask policy | 없음 | 기본 `independent_capped`, `active_softmax` ablation |
 
 ---
 
