@@ -21,6 +21,8 @@ evidence:
 decoder:
   hidden_channels: 128
   mask_normalization: active_softmax
+  mask_mode: active_softmax
+  max_mask: 2.0
 projector:
   hidden_channels: 256
   out_dim: 512

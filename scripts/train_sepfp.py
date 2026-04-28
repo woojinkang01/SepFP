@@ -33,6 +33,8 @@ def main(cfg: DictConfig) -> None:
         decoder_hidden_channels=cfg.model.decoder.hidden_channels,
         projector_hidden_channels=cfg.model.projector.hidden_channels,
         projector_out_dim=cfg.model.projector.out_dim,
+        mask_mode=cfg.model.decoder.get("mask_mode", cfg.model.decoder.get("mask_normalization", "active_softmax")),
+        max_mask=cfg.model.decoder.get("max_mask", 2.0),
     )
     module = SepFPLightningModule(
         model=model,

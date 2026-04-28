@@ -73,7 +73,7 @@ def test_active_softmax_masks_sum_to_one():
         dtype=torch.bool,
     )
     ctx = _ctx(batch, active_mask)
-    model = SepFPModel()
+    model = SepFPModel(mask_mode="active_softmax")
     outputs = model.forward_branch(ctx)
 
     for sample_idx in range(batch):
@@ -84,6 +84,34 @@ def test_active_softmax_masks_sum_to_one():
                 masks.append(stem_batch.extras["mask"][int(row[0].item())])
         mask_sum = torch.stack(masks, dim=0).sum(dim=0)
         assert torch.allclose(mask_sum, torch.ones_like(mask_sum), atol=1e-5)
+
+
+def test_independent_capped_masks_do_not_force_sum_to_one():
+    batch = 2
+    active_mask = torch.tensor(
+        [
+            [True, True, False, False, False, False],
+            [False, True, True, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    ctx = _ctx(batch, active_mask)
+    model = SepFPModel(mask_mode="independent_capped", max_mask=2.0)
+    outputs = model.forward_branch(ctx)
+
+    for stem_batch in outputs.stem_preds.values():
+        mask = stem_batch.extras["mask"]
+        assert torch.all(mask >= 0)
+        assert torch.all(mask <= 2.0)
+
+    for sample_idx in range(batch):
+        masks = []
+        for stem_batch in outputs.stem_preds.values():
+            row = torch.nonzero(stem_batch.sample_idx == sample_idx, as_tuple=False).flatten()
+            if row.numel() > 0:
+                masks.append(stem_batch.extras["mask"][int(row[0].item())])
+        mask_sum = torch.stack(masks, dim=0).sum(dim=0)
+        assert not torch.allclose(mask_sum, torch.ones_like(mask_sum), atol=1e-3)
 
 
 def test_model_respects_configurable_dimensions():

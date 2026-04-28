@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from sepfp.data.batch_types import BranchContext, STEM_ORDER, StemBatch
 from sepfp.models.encoder import TFEvidenceEncoder
@@ -21,6 +22,8 @@ class BranchOutputs:
 
 
 class SepFPModel(nn.Module):
+    VALID_MASK_MODES = {"active_softmax", "independent_sigmoid", "independent_softplus", "independent_capped"}
+
     def __init__(
         self,
         stems: tuple[str, ...] = STEM_ORDER,
@@ -31,9 +34,15 @@ class SepFPModel(nn.Module):
         decoder_hidden_channels: int = 128,
         projector_hidden_channels: int = 256,
         projector_out_dim: int = 512,
+        mask_mode: str = "active_softmax",
+        max_mask: float = 2.0,
     ) -> None:
         super().__init__()
+        if mask_mode not in self.VALID_MASK_MODES:
+            raise ValueError(f"Unknown mask_mode: {mask_mode}")
         self.stems = stems
+        self.mask_mode = mask_mode
+        self.max_mask = max_mask
         self.encoder = TFEvidenceEncoder(out_channels=encoder_channels)
         self.evidence = SourceQueryEvidenceExtractor(
             stems=stems,
@@ -78,6 +87,15 @@ class SepFPModel(nn.Module):
 
         return masks_by_stem
 
+    def _independent_masks(self, logits_by_stem: dict[str, StemBatch]) -> dict[str, torch.Tensor]:
+        if self.mask_mode == "independent_sigmoid":
+            return {stem: torch.sigmoid(batch.tensor) for stem, batch in logits_by_stem.items()}
+        if self.mask_mode == "independent_softplus":
+            return {stem: F.softplus(batch.tensor) for stem, batch in logits_by_stem.items()}
+        if self.mask_mode == "independent_capped":
+            return {stem: self.max_mask * torch.sigmoid(batch.tensor) for stem, batch in logits_by_stem.items()}
+        raise ValueError(f"Unknown mask_mode: {self.mask_mode}")
+
     def forward_branch(self, ctx: BranchContext) -> BranchOutputs:
         features = self.encoder(ctx.x_input)
         stem_latents = self.evidence(features, ctx.active_mask)
@@ -94,7 +112,10 @@ class SepFPModel(nn.Module):
                 provenance=tuple(ctx.provenance[idx].get(stem, ()) for idx in stem_batch.sample_idx.tolist()),
             )
 
-        masks_by_stem = self._active_softmax_masks(logits_by_stem, batch_size=ctx.x_input.size(0))
+        if self.mask_mode == "active_softmax":
+            masks_by_stem = self._active_softmax_masks(logits_by_stem, batch_size=ctx.x_input.size(0))
+        else:
+            masks_by_stem = self._independent_masks(logits_by_stem)
 
         stem_preds: dict[str, StemBatch] = {}
         for stem, stem_batch in logits_by_stem.items():

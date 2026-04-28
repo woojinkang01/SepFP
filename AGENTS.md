@@ -13,3 +13,11 @@
 
 - CPU is limited; keep `num_workers <= 6`.
 - Avoid heavy on-the-fly preprocessing during training.
+
+## Git
+
+- Remote: `origin` -> `https://github.com/woojinkang01/SepFP.git`
+- Default branch: `main`
+- Keep datasets, checkpoints, logs, wandb runs, local envs, and experiment outputs out of Git.
+- Do not commit, push, branch, rewrite history, or change remotes unless explicitly requested.
+- Before committing, check `git status --short` and staged changes.
