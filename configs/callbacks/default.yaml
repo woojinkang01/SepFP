@@ -1,0 +1,4 @@
+model_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  save_top_k: 0
+  save_last: true

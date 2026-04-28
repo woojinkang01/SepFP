@@ -1,0 +1,45 @@
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local environments
+.conda/
+.env
+.venv/
+venv/
+/.codex
+
+# Experiment artifacts
+/wandb/
+/logs/
+/outputs/
+/checkpoints/
+*.ckpt
+*.pt
+*.pth
+
+# Generated Hydra/Lightning run directories
+/sepfp/
+
+# Dataset artifacts
+/data/*
+!/data/prepare_moisesdb_for_sepfp.py
+!/data/splits/
+!/data/splits/**
+
+# External/reference checkouts and papers
+/_ref/
+
+# Local editor/OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sepfp"
+version = "0.1.0"
+description = "SepFP implementation workspace"
+readme = "md_files/00_master_document.md"
+requires-python = ">=3.10"
+dependencies = [
+    "hydra-core>=1.3",
+    "lightning>=2.0",
+    "numpy",
+    "pedalboard",
+    "rootutils",
+    "scipy",
+    "torch",
+    "tqdm",
+    "wandb",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

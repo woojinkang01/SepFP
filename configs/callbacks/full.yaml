@@ -1,0 +1,20 @@
+periodic_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  filename: "epoch{epoch:03d}-step{step}"
+  auto_insert_metric_name: false
+  save_top_k: -1
+  every_n_epochs: 10
+  save_last: false
+
+best_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  filename: "best-epoch{epoch:03d}-valloss{val/loss:.4f}"
+  auto_insert_metric_name: false
+  monitor: val/loss
+  mode: min
+  save_top_k: 1
+  save_last: true
+
+learning_rate_monitor:
+  _target_: lightning.pytorch.callbacks.LearningRateMonitor
+  logging_interval: step

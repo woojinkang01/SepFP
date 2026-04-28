@@ -1,0 +1,26 @@
+stems: [vocals, drums, bass, guitar, piano, others]
+transform:
+  _target_: sepfp.data.vqt.VQT
+  sr: ${data.dataset.sample_rate}
+  hop_length: 320
+  fmin: 27.5
+  n_bins: 288
+  bins_per_octave: 36
+  gamma: 7
+  center: false
+  output_format: Complex
+block_size: [252, 256]
+time_stretch: [0.7, 1.5]
+pitch_shift: true
+encoder:
+  out_channels: 256
+evidence:
+  channels: 192
+  query_dim: 256
+  num_attention_heads: 4
+decoder:
+  hidden_channels: 128
+  mask_normalization: active_softmax
+projector:
+  hidden_channels: 256
+  out_dim: 512

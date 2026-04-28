@@ -1,0 +1,11 @@
+_target_: lightning.Trainer
+max_epochs: 10
+accelerator: auto
+devices: 1
+log_every_n_steps: 1
+enable_checkpointing: false
+enable_model_summary: true
+limit_train_batches: 8
+limit_val_batches: 0
+num_sanity_val_steps: 0
+overfit_batches: 0.0

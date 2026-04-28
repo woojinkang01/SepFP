@@ -1,0 +1,13 @@
+defaults:
+  - data: default
+  - model: sepfp
+  - loss: sepfp
+  - optimizer: default
+  - scheduler: null
+  - trainer: default
+  - callbacks: default
+  - logger: null
+  - _self_
+
+task_name: train_sepfp
+seed: 0

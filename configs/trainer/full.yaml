@@ -1,0 +1,15 @@
+_target_: lightning.Trainer
+max_epochs: 100
+max_steps: -1
+accelerator: gpu
+devices: 2
+strategy: ddp
+precision: 32-true
+accumulate_grad_batches: 1
+gradient_clip_val: 1.0
+log_every_n_steps: 10
+enable_checkpointing: true
+enable_model_summary: true
+num_sanity_val_steps: 0
+detect_anomaly: false
+check_val_every_n_epoch: 1

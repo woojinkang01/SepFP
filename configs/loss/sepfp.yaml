@@ -1,0 +1,10 @@
+sep:
+  type: l1
+  lambda_: 100.0
+asid:
+  temperature: 0.01
+  trainable: true
+  anchor_side: art
+  multi_positive: grouped_numerator
+  lambda_final: 1.0
+  warmup_epochs: 5

@@ -1,0 +1,32 @@
+_target_: sepfp.data.datamodule.SepFPDataModule
+
+dataset:
+  data_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_16k_mono_cropped
+  meta_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_meta_train208_seed0
+  duration: 7.2
+  sample_rate: 16000
+  board: []
+  duplicate_dataset: 1
+  threshold: 0.5
+  subset: 1.0
+  num_trials: 10
+
+validation_dataset:
+  data_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_16k_mono_cropped
+  meta_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_meta_val32_seed0
+  duration: 7.2
+  sample_rate: 16000
+  board: []
+  duplicate_dataset: 1
+  threshold: 0.5
+  subset: 1.0
+  num_trials: 10
+
+norm_stats: [0.0, 1.0]
+
+dataloader:
+  batch_size: 8
+  num_workers: 0
+  pin_memory: false
+  persistent_workers: false
+  devices: 1
