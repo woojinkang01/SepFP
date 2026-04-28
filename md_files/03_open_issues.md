@@ -12,7 +12,7 @@ x_input: log-normalized magnitude VQT
 x_linear_mag: linear magnitude VQT carrier
 u_s: source-query evidence map for active stem s
 pred_s: mask_s * x_linear_mag
-z_s: EvidenceProjector(u_s.detach())
+z_s: EvidenceProjector_s(u_s.detach())
 loss = 100.0 * L_sep + lambda_asid(epoch) * L_asid
 ```
 
@@ -24,7 +24,7 @@ mask_s = 2.0 * sigmoid(mask_logits_s)
 
 Stem routing is oracle-active during training. If a stem is inactive, the current baseline does not compute `u_s`, `pred_s`, `z_s`, `L_sep`, or `L_asid` for that sample-stem pair.
 
-Any new design should be compared against this baseline with raw and weighted losses separated. `val/loss` alone is not a scientific metric for ASID quality.
+Any new design should be compared against this baseline with raw losses and objective terms separated. `val/objective/asid_term` is useful for checkpointing projector learning, but it is not a scientific ASID retrieval metric.
 
 ## 1. ASID Gradient Routing
 
@@ -36,14 +36,22 @@ Current implementation:
 
 ```text
 L_sep  -> TFEvidenceEncoder + SourceQueryEvidenceExtractor + LinearMagMaskDecoder
-L_asid -> EvidenceProjector only
+L_asid -> per-stem EvidenceProjector_s only
 ```
+
+Current branch decision:
+
+```text
+u_s.detach() -> EvidenceProjector_s -> z_s
+```
+
+The model owns one projector per configured stem, but `forward_branch()` must call only the projector for stems returned by `SourceQueryEvidenceExtractor`. Inactive stems should have no `u_s`, no `z_s`, no projector forward call, and no projector gradient in that step.
 
 Three candidate routes:
 
 | Choice | ASID updates | Meaning |
 |---|---|---|
-| A | `EvidenceProjector` only | Separation defines `u_s`; projector learns to read it for retrieval. |
+| A | `EvidenceProjector_s` only | Separation defines `u_s`; each stem projector learns to read it for retrieval. |
 | B | `EvidenceProjector + SourceQueryEvidenceExtractor` | ASID can shape stem-specific evidence extraction, but not the shared encoder. |
 | C | `EvidenceProjector + SourceQueryEvidenceExtractor + TFEvidenceEncoder` | ASID can shape the full representation stack. |
 
@@ -58,7 +66,7 @@ Good source separation features are not guaranteed to be good retrieval features
 
 ### Critical Risks
 
-Choice A is the cleanest control but may bottleneck retrieval. If `L_sep` removes identity-relevant cues before the projector sees them, `L_asid` cannot recover them.
+Choice A is the cleanest control but may bottleneck retrieval. If `L_sep` removes identity-relevant cues before the projector sees them, `L_asid` cannot recover them. Splitting the projector by stem removes cross-stem projector interference, but it does not let ASID reshape `u_s`.
 
 Choice B is the most plausible next experiment. It lets ASID influence the learned source query, attention, and FiLM/gating that create `u_s`, while keeping the shared TF encoder separation-driven. The risk is that `u_s` starts optimizing identity discrimination at the expense of mask quality.
 
@@ -76,10 +84,15 @@ Simply removing `u.detach()` in the projector implements Choice C, not Choice B.
 
 ### Must-Log Metrics
 
-- `train/sep_loss`, `val/sep_loss`
-- `train/asid_loss`, `val/asid_loss`
-- `train/sep_loss/{stem}`, `val/sep_loss/{stem}`
-- module-wise grad norms: encoder, evidence extractor, decoder, projector
+- `train/loss_raw/sep`, `val/loss_raw/sep`
+- `train/loss_raw/asid`, `val/loss_raw/asid`
+- `train/objective_total`, `val/objective_total`
+- `train/objective/sep_term`, `val/objective/sep_term`
+- `train/objective/asid_term`, `val/objective/asid_term`
+- `train/loss_raw/sep/{stem}`, `val/loss_raw/sep/{stem}`
+- `train/loss_raw/asid/{stem}`, `val/loss_raw/asid/{stem}`
+- `train/lr/sep`, `train/lr/asid_projectors`, `train/lr/asid_temperature`
+- module-wise grad norms: encoder, evidence extractor, decoder, per-stem projectors
 - stem-wise retrieval ranks, not just InfoNCE loss
 - A/B/A+B provenance-case breakdown
 

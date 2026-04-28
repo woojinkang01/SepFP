@@ -70,7 +70,7 @@ active stem s:
   current default: mask_s = 2.0 * sigmoid(mask_logits_s)
   pred_s = mask_s * x_linear_mag[idx_s]
 
-  u_s -> EvidenceProjector -> z_s: normalized (N_s,512)
+  u_s.detach() -> EvidenceProjector_s -> z_s: normalized (N_s,512)
 ```
 
 Absence rule:
@@ -94,7 +94,7 @@ target_complex_s = sum(aligned complex VQT components for stem s)
 target_linear_s = abs(target_complex_s)
 pred_linear_s = mask_s * x_linear_mag
 L_sep_raw = L1(pred_linear_s, target_linear_s)
-loss = 100.0 * L_sep_raw + lambda_asid * L_asid_raw
+objective_total = 100.0 * L_sep_raw + lambda_asid * L_asid_raw
 ```
 
 This is deliberate. The model input remains lognorm; the separation comparison does not.
@@ -112,10 +112,10 @@ The implementation averages over stems with valid anchors.
 ASID gradient routing is intentionally constrained:
 
 ```text
-u_s -> detach -> EvidenceProjector -> z_s -> L_asid
+u_s -> detach -> EvidenceProjector_s -> z_s -> L_asid
 ```
 
-So `L_asid` currently updates the projector only. Encoder, source-query evidence extractor, and decoder are trained directly by `L_sep`.
+So `L_asid` currently updates the active stem's projector only. Encoder, source-query evidence extractor, and decoder are trained directly by `L_sep`. Inactive stem projectors should not be called in that step.
 
 ### Mask Modes
 
@@ -145,12 +145,15 @@ Key settings:
 - `devices: 2`
 - `strategy: ddp`
 - `precision: 32-true`
-- optimizer LR: `3e-6`
+- optimizer param groups:
+  - `sep`: `lr=3e-6`
+  - `asid_projectors`: `lr=1e-5`
+  - `asid_temperature`: `lr=1e-5`
 - `mask_mode: independent_capped`
 - `max_mask: 2.0`
 - `lambda_sep: 100.0`
 - global `batch_size: 8`
-- checkpoint every 10 epochs, best by `val/loss`, and last
+- checkpoint every 10 epochs, best by `val/objective/asid_term`, and last
 - W&B project: `sepfp`
 - W&B group: `source-query-linear-mask`
 
@@ -185,7 +188,7 @@ These runs are diagnostic only. They compare separation behavior, mask scale, ta
 - Do not route `z_s` from decoder features, masks, or skip features.
 - Do not describe `active_softmax` as the current default unless the config was changed back.
 - Do not compute absent stems and mask them later; absent stems should be skipped.
-- Do not treat `val/loss` as a final ASID metric.
+- Do not treat `val/objective/asid_term` as a final ASID retrieval metric.
 - Do not launch long training from Codex if CUDA is not visible in the actual tool environment.
 - Do not treat DDP validation metrics as fully reliable while Lightning is warning that epoch-level validation logs need `sync_dist=True`.
 

@@ -55,10 +55,15 @@ class SepFPModel(nn.Module):
             in_channels=evidence_channels,
             hidden_channels=decoder_hidden_channels,
         )
-        self.projector = EvidenceProjector(
-            in_channels=evidence_channels,
-            hidden_channels=projector_hidden_channels,
-            out_dim=projector_out_dim,
+        self.projectors = nn.ModuleDict(
+            {
+                stem: EvidenceProjector(
+                    in_channels=evidence_channels,
+                    hidden_channels=projector_hidden_channels,
+                    out_dim=projector_out_dim,
+                )
+                for stem in stems
+            }
         )
 
     def _active_softmax_masks(
@@ -104,7 +109,7 @@ class SepFPModel(nn.Module):
         stem_embeds: dict[str, StemBatch] = {}
         for stem, stem_batch in stem_latents.items():
             logits = self.decoder(stem_batch.tensor)
-            z = self.projector(stem_batch.tensor)
+            z = self.projectors[stem](stem_batch.tensor)
             logits_by_stem[stem] = StemBatch(sample_idx=stem_batch.sample_idx, tensor=logits)
             stem_embeds[stem] = StemBatch(
                 sample_idx=stem_batch.sample_idx,

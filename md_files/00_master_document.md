@@ -39,7 +39,7 @@ For each active stem `s`:
 |---|---:|---|
 | `u_s` | `(N_s, 192, 63, 64)` | source-query evidence extractor |
 | `pred_s` | `(N_s, 1, 252, 256)` | `mask_s * x_linear_mag[idx_s]` |
-| `z_s` | `(N_s, 512)` | evidence projector from `u_s` |
+| `z_s` | `(N_s, 512)` | stem-specific evidence projector from `u_s.detach()` |
 
 `N_s` is the number of active samples for stem `s`, not the batch size.
 
@@ -64,7 +64,7 @@ current default mask mode:
   mask_s = 2.0 * sigmoid(mask_logits_s)   # independent_capped
   pred_s = mask_s * x_linear_mag[idx_s]
 
-  u_s -> EvidenceProjector
+  u_s.detach() -> EvidenceProjector_s
     -> z_s: normalized (N_s,512)
 ```
 
@@ -75,8 +75,8 @@ current default mask mode:
 | `src/sepfp/models/encoder.py` | `TFEvidenceEncoder` | dense time-frequency encoder |
 | `src/sepfp/models/stem_head.py` | `SourceQueryEvidenceExtractor` | active-stem evidence extraction using learned stem queries and attention |
 | `src/sepfp/models/sep_decoder.py` | `LinearMagMaskDecoder` | predicts linear-magnitude mask logits from `u_s` only |
-| `src/sepfp/models/projector.py` | `EvidenceProjector` | attention-pools `u_s` and returns normalized `z_s` |
-| `src/sepfp/models/sepfp_model.py` | `SepFPModel` | wires encoder, evidence extractor, decoder, configurable mask modes, and projector |
+| `src/sepfp/models/projector.py` | `EvidenceProjector` | attention-pools detached `u_s` and returns normalized `z_s` |
+| `src/sepfp/models/sepfp_model.py` | `SepFPModel` | wires encoder, evidence extractor, decoder, configurable mask modes, and per-stem projectors |
 
 ### Mask Modes
 
@@ -141,7 +141,7 @@ L_sep_raw = mean L1(pred_linear_s, target_linear_s)
 `L_sep_raw` is computed for both art and ref branch outputs after the branch stem batches are merged. The training objective currently uses `lambda_sep=100.0`:
 
 ```text
-loss = 100.0 * L_sep_raw + lambda_asid * L_asid_raw
+objective_total = 100.0 * L_sep_raw + lambda_asid * L_asid_raw
 ```
 
 For Case A+B, where the same stem type appears from two provenance sources in `x_art`, the target is the summed complex VQT of both effected stem components before conversion to linear magnitude.
@@ -181,7 +181,10 @@ Current full profile:
 - `trainer.devices: 2`
 - `trainer.strategy: ddp`
 - `trainer.precision: 32-true`
-- optimizer LR currently configured at `3e-6`
+- optimizer param groups:
+  - `sep`: `lr=3e-6` for encoder, evidence extractor, and decoder
+  - `asid_projectors`: `lr=1e-5` for per-stem projectors
+  - `asid_temperature`: `lr=1e-5` for InfoNCE temperature
 - `lambda_sep: 100.0`
 - `mask_mode: independent_capped`
 - `max_mask: 2.0`
@@ -190,7 +193,7 @@ Current full profile:
 - validation split: 32 songs
 - checkpointing:
   - every 10 epochs
-  - best checkpoint by `val/loss`
+  - best checkpoint by `val/objective/asid_term`
   - last checkpoint
 
 Codex sandbox may not see CUDA even when the host shell does. Verify GPU visibility from the actual training shell before launching the full run.
@@ -207,13 +210,13 @@ Validated contracts include:
 
 - lognorm input and linear-magnitude carrier are separate tensors
 - separation targets are linear magnitude
-- total loss uses weighted separation and ASID terms
+- `objective_total` uses weighted separation and ASID terms
 - active stem outputs have expected shapes
 - absent stems are skipped
 - `active_softmax` masks sum to one over active stems per sample
 - `independent_capped` masks are nonnegative, capped by `max_mask`, and do not force a unit sum
 - `z_s` is normalized
-- one shared training step returns finite `loss`, `sep_loss`, and `asid_loss`
+- one shared training step returns finite objective, raw `sep_loss`, and raw `asid_loss`
 
 Recent run context:
 
@@ -234,6 +237,6 @@ Still needed before trusting a long run scientifically:
 - `independent_capped` can under- or over-assign total mixture energy because masks are no longer constrained to sum to one.
 - `active_softmax`, while still supported, forces all mixture magnitude into active stems, including residual/noisy energy.
 - Linear magnitude loss has a larger dynamic range than log-domain loss; scale statistics should be watched early.
-- The validation metric is currently `val/loss`, not a retrieval metric.
+- The best-checkpoint monitor is currently `val/objective/asid_term`, not a retrieval metric.
 - `others` remains heterogeneous and may be difficult to use as a stable retrieval stem.
 - Inference-time stem presence detection is not implemented; training uses oracle stem presence.

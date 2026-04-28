@@ -241,7 +241,7 @@ def shared_step(batch):
 현재 기본 objective는:
 
 ```text
-loss = 100.0 * L_sep + lambda_asid(epoch) * L_asid
+objective_total = 100.0 * L_sep + lambda_asid(epoch) * L_asid
 ```
 
 `lambda_asid`는 warmup 후 1.0에 도달한다. `z_s`는 `u_s`에서 계산되지만 projector 입력에서 `u_s.detach()`가 적용되므로, 현재 `L_asid`는 encoder/evidence/decoder를 직접 업데이트하지 않고 projector만 업데이트한다.

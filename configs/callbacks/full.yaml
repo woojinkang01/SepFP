@@ -8,9 +8,9 @@ periodic_checkpoint:
 
 best_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
-  filename: "best-epoch{epoch:03d}-valloss{val/loss:.4f}"
+  filename: "best-epoch{epoch:03d}-valasidobj{val/objective/asid_term:.4f}"
   auto_insert_metric_name: false
-  monitor: val/loss
+  monitor: val/objective/asid_term
   mode: min
   save_top_k: 1
   save_last: true

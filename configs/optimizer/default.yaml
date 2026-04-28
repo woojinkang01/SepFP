@@ -1,3 +1,6 @@
-_target_: torch.optim.AdamW
+_target_: sepfp.training.optim.build_sepfp_optimizer
 _partial_: true
-lr: 3e-6
+lr_sep: 3e-6
+lr_asid: 1e-5
+lr_asid_temperature: 1e-5
+weight_decay: 0.01

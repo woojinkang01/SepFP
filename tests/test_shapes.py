@@ -43,6 +43,7 @@ def test_shape_path_and_absent_stem_skip():
     )
     ctx = _ctx(batch, active_mask)
     model = SepFPModel()
+    assert set(model.projectors.keys()) == set(STEM_ORDER)
 
     features = model.encoder(ctx.x_input)
     assert features.shape == (2, 256, 63, 64)
@@ -144,7 +145,50 @@ def test_model_respects_configurable_dimensions():
         assert stem_batch.tensor.shape[-1] == 64
 
 
-def test_asid_loss_updates_projector_only():
+def _has_grad(parameters) -> bool:
+    return any(
+        grad is not None and torch.isfinite(grad).all() and grad.abs().sum() > 0
+        for grad in (parameter.grad for parameter in parameters if parameter.requires_grad)
+    )
+
+
+def _has_no_grad(parameters) -> bool:
+    return all(parameter.grad is None for parameter in parameters if parameter.requires_grad)
+
+
+def test_per_stem_projectors_run_only_for_active_stems():
+    batch = 2
+    active_mask = torch.tensor(
+        [
+            [True, False, False, False, False, False],
+            [True, False, False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    ctx = _ctx(batch, active_mask)
+    model = SepFPModel()
+    call_count = {stem: 0 for stem in STEM_ORDER}
+    hooks = []
+
+    for stem, projector in model.projectors.items():
+        def _count_call(_module, _inputs, _output, stem=stem):
+            call_count[stem] += 1
+
+        hooks.append(projector.register_forward_hook(_count_call))
+
+    try:
+        model.forward_branch(ctx)
+    finally:
+        for hook in hooks:
+            hook.remove()
+
+    assert call_count["vocals"] == 1
+    for stem in STEM_ORDER:
+        if stem != "vocals":
+            assert call_count[stem] == 0
+
+
+def test_asid_loss_updates_only_active_stem_projector():
     batch = 2
     active_mask = torch.tensor(
         [
@@ -166,12 +210,44 @@ def test_asid_loss_updates_projector_only():
     model.zero_grad(set_to_none=True)
     loss.backward()
 
-    encoder_grads = [p.grad for p in model.encoder.parameters() if p.requires_grad]
-    evidence_grads = [p.grad for p in model.evidence.parameters() if p.requires_grad]
-    decoder_grads = [p.grad for p in model.decoder.parameters() if p.requires_grad]
-    projector_grads = [p.grad for p in model.projector.parameters() if p.requires_grad]
+    assert _has_no_grad(model.encoder.parameters())
+    assert _has_no_grad(model.evidence.parameters())
+    assert _has_no_grad(model.decoder.parameters())
+    assert _has_grad(model.projectors["vocals"].parameters())
+    for stem in STEM_ORDER:
+        if stem != "vocals":
+            assert _has_no_grad(model.projectors[stem].parameters())
 
-    assert all(grad is None for grad in encoder_grads)
-    assert all(grad is None for grad in evidence_grads)
-    assert all(grad is None for grad in decoder_grads)
-    assert any(grad is not None and torch.isfinite(grad).all() and grad.abs().sum() > 0 for grad in projector_grads)
+
+def test_asid_loss_updates_multiple_active_stem_projectors_only():
+    batch = 2
+    active_mask = torch.tensor(
+        [
+            [True, True, False, False, False, False],
+            [True, True, False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    ctx = _ctx(batch, active_mask)
+    model = SepFPModel()
+    outputs = model.forward_branch(ctx)
+    pos_masks = {
+        "vocals": torch.eye(batch, dtype=torch.bool),
+        "drums": torch.eye(batch, dtype=torch.bool),
+    }
+    loss = MultiPositiveInfoNCELoss(temperature=0.1, trainable=False)(
+        outputs.stem_embeds,
+        outputs.stem_embeds,
+        pos_masks,
+    ).loss
+
+    model.zero_grad(set_to_none=True)
+    loss.backward()
+
+    assert _has_no_grad(model.encoder.parameters())
+    assert _has_no_grad(model.evidence.parameters())
+    assert _has_no_grad(model.decoder.parameters())
+    assert _has_grad(model.projectors["vocals"].parameters())
+    assert _has_grad(model.projectors["drums"].parameters())
+    for stem in ("bass", "guitar", "piano", "others"):
+        assert _has_no_grad(model.projectors[stem].parameters())
