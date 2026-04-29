@@ -61,6 +61,7 @@ def tracked_stretch_and_crop(
     j: torch.Tensor | int | None = None,
     s: torch.Tensor | None = None,
     random_padding: bool = True,
+    pad_left: torch.Tensor | int | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     batch = x.size(0)
     block_h, block_w = block_size
@@ -69,6 +70,8 @@ def tracked_stretch_and_crop(
     out = []
     j_indices = []
     i_indices = []
+    pad_left_values = []
+    pad_right_values = []
     for batch_idx, elem in enumerate(x.permute(0, 3, 1, 2)):
         _, height, width = elem.shape
         new_width = int(width / float(factors[batch_idx]))
@@ -76,9 +79,19 @@ def tracked_stretch_and_crop(
 
         if new_width < block_w:
             total_padding = block_w - new_width
-            left_padding = int(torch.randint(total_padding + 1, (1,), device=x.device).item()) if random_padding else 0
-            stretched = F.pad(stretched, (left_padding, total_padding - left_padding))
+            if torch.is_tensor(pad_left):
+                left_padding = int(pad_left[batch_idx].item() if pad_left.ndim > 0 else pad_left.item())
+            elif isinstance(pad_left, int):
+                left_padding = pad_left
+            else:
+                left_padding = int(torch.randint(total_padding + 1, (1,), device=x.device).item()) if random_padding else 0
+            left_padding = max(0, min(left_padding, total_padding))
+            right_padding = total_padding - left_padding
+            stretched = F.pad(stretched, (left_padding, right_padding))
             new_width = block_w
+        else:
+            left_padding = 0
+            right_padding = 0
 
         offset_i = generate_indices(height - block_h + 1, 1, i=None if i is None or torch.is_tensor(i) else i, device=x.device)[0]
         if torch.is_tensor(i):
@@ -95,12 +108,16 @@ def tracked_stretch_and_crop(
         out.append(stretched[:, offset_i : offset_i + block_h, offset_j : offset_j + block_w])
         i_indices.append(offset_i)
         j_indices.append(offset_j)
+        pad_left_values.append(torch.tensor(left_padding, dtype=torch.long, device=x.device))
+        pad_right_values.append(torch.tensor(right_padding, dtype=torch.long, device=x.device))
 
     stacked = torch.stack(out, dim=0).permute(0, 2, 3, 1)
     return stacked, {
         "i": torch.stack(i_indices).to(dtype=torch.long),
         "j": torch.stack(j_indices).to(dtype=torch.long),
         "stretch": factors.to(dtype=torch.float32),
+        "pad_left": torch.stack(pad_left_values).to(dtype=torch.long),
+        "pad_right": torch.stack(pad_right_values).to(dtype=torch.long),
     }
 
 
@@ -211,6 +228,8 @@ def build_ref_branch(
     if time_stretch is None:
         x_ref_complex, crop_meta = tracked_extract_random_blocks(x_AB_complex, block_size, i=crop_size)
         crop_meta["stretch"] = torch.ones(x_ref_complex.size(0), device=x_AB_complex.device)
+        crop_meta["pad_left"] = torch.zeros(x_ref_complex.size(0), dtype=torch.long, device=x_AB_complex.device)
+        crop_meta["pad_right"] = torch.zeros(x_ref_complex.size(0), dtype=torch.long, device=x_AB_complex.device)
     else:
         x_ref_complex, crop_meta = tracked_stretch_and_crop(
             x_AB_complex,

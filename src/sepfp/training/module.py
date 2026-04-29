@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable, Type
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 import lightning as L
 
@@ -101,7 +102,7 @@ class SepFPLightningModule(LightningModule):
         progress = min(float(current_epoch + 1) / self.lambda_asid_warmup_epochs, 1.0)
         return self.lambda_asid_final * progress
 
-    def _log_optimizer_lrs(self, stage: str, on_step: bool, on_epoch: bool) -> None:
+    def _log_optimizer_lrs(self, stage: str, on_step: bool, on_epoch: bool, batch_size: int) -> None:
         if stage != "train":
             return
         try:
@@ -113,7 +114,96 @@ class SepFPLightningModule(LightningModule):
         for optimizer in trainer.optimizers:
             for group_idx, group in enumerate(optimizer.param_groups):
                 group_name = group.get("name", f"group_{group_idx}")
-                self.log(f"{stage}/lr/{group_name}", float(group["lr"]), on_step=on_step, on_epoch=on_epoch)
+                self.log(
+                    f"{stage}/lr/{group_name}",
+                    float(group["lr"]),
+                    on_step=on_step,
+                    on_epoch=on_epoch,
+                    batch_size=batch_size,
+                )
+
+    @staticmethod
+    def _distributed_sum(value: torch.Tensor) -> torch.Tensor:
+        if dist.is_available() and dist.is_initialized():
+            value = value.clone()
+            dist.all_reduce(value, op=dist.ReduceOp.SUM)
+        return value
+
+    def _log_train_stem_metrics(
+        self,
+        stage: str,
+        sep_output,
+        asid_output,
+        log_kwargs: dict[str, object],
+    ) -> None:
+        for stem, stem_sep_loss in sep_output.per_stem_loss.items():
+            self.log(f"{stage}/loss_raw/sep/{stem}", stem_sep_loss, **log_kwargs)
+        for stem, stem_count in sep_output.per_stem_count.items():
+            self.log(f"{stage}/sep_count/{stem}", float(stem_count), **log_kwargs)
+        for stem, stem_asid_loss in asid_output.per_stem_loss.items():
+            self.log(f"{stage}/loss_raw/asid/{stem}", stem_asid_loss, **log_kwargs)
+        for stem, anchor_count in asid_output.per_stem_anchor_count.items():
+            self.log(f"{stage}/asid_anchor_count/{stem}", float(anchor_count), **log_kwargs)
+
+    def _log_val_stem_metrics(
+        self,
+        stage: str,
+        sep_output,
+        asid_output,
+        device: torch.device,
+    ) -> None:
+        # Validation metrics must be logged in a fixed order on every DDP rank.
+        # Per-stem dictionaries are sparse because each rank can see different active stems.
+        for stem in self.stems:
+            sep_count = torch.tensor(float(sep_output.per_stem_count.get(stem, 0)), device=device)
+            sep_loss = sep_output.per_stem_loss.get(stem)
+            sep_sum = torch.zeros((), device=device) if sep_loss is None else sep_loss.detach() * sep_count
+            sep_count_global = self._distributed_sum(sep_count)
+            sep_sum_global = self._distributed_sum(sep_sum)
+            sep_loss_global = sep_sum_global / sep_count_global.clamp_min(1.0)
+            sep_batch_size = max(int(sep_count_global.detach().item()), 1)
+            self.log(
+                f"{stage}/loss_raw/sep/{stem}",
+                sep_loss_global,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=False,
+                batch_size=sep_batch_size,
+            )
+            self.log(
+                f"{stage}/sep_count/{stem}",
+                sep_count_global,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=False,
+                reduce_fx="sum",
+                batch_size=1,
+            )
+
+            asid_count = torch.tensor(float(asid_output.per_stem_anchor_count.get(stem, 0)), device=device)
+            asid_loss = asid_output.per_stem_loss.get(stem)
+            asid_sum = torch.zeros((), device=device) if asid_loss is None else asid_loss.detach() * asid_count
+            asid_count_global = self._distributed_sum(asid_count)
+            asid_sum_global = self._distributed_sum(asid_sum)
+            asid_loss_global = asid_sum_global / asid_count_global.clamp_min(1.0)
+            asid_batch_size = max(int(asid_count_global.detach().item()), 1)
+            self.log(
+                f"{stage}/loss_raw/asid/{stem}",
+                asid_loss_global,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=False,
+                batch_size=asid_batch_size,
+            )
+            self.log(
+                f"{stage}/asid_anchor_count/{stem}",
+                asid_count_global,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=False,
+                reduce_fx="sum",
+                batch_size=1,
+            )
 
     def shared_step(self, batch: SepFPTrainBatch, stage: str = "train") -> StepOutput:
         with torch.no_grad():
@@ -173,28 +263,27 @@ class SepFPLightningModule(LightningModule):
         objective_total = objective_sep_term + objective_asid_term
 
         is_train = stage == "train"
-        self.log(f"{stage}/loss", objective_total, on_step=is_train, on_epoch=not is_train, prog_bar=True)
-        self.log(f"{stage}/objective_total", objective_total, on_step=is_train, on_epoch=not is_train)
-        self.log(f"{stage}/objective/sep_term", objective_sep_term, on_step=is_train, on_epoch=not is_train)
-        self.log(f"{stage}/objective/asid_term", objective_asid_term, on_step=is_train, on_epoch=not is_train)
-        self.log(f"{stage}/loss_raw/sep", sep_loss, on_step=is_train, on_epoch=not is_train)
-        self.log(f"{stage}/loss_raw/asid", asid_output.loss, on_step=is_train, on_epoch=not is_train)
-        self.log(f"{stage}/lambda_sep", float(self.lambda_sep), on_step=is_train, on_epoch=not is_train)
-        self.log(f"{stage}/lambda_asid", float(lambda_asid), on_step=is_train, on_epoch=not is_train)
-        for stem, stem_sep_loss in sep_output.per_stem_loss.items():
-            self.log(f"{stage}/loss_raw/sep/{stem}", stem_sep_loss, on_step=is_train, on_epoch=not is_train)
-        for stem, stem_count in sep_output.per_stem_count.items():
-            self.log(f"{stage}/sep_count/{stem}", float(stem_count), on_step=is_train, on_epoch=not is_train)
-        for stem, stem_asid_loss in asid_output.per_stem_loss.items():
-            self.log(f"{stage}/loss_raw/asid/{stem}", stem_asid_loss, on_step=is_train, on_epoch=not is_train)
-        for stem, anchor_count in asid_output.per_stem_anchor_count.items():
-            self.log(
-                f"{stage}/asid_anchor_count/{stem}",
-                float(anchor_count),
-                on_step=is_train,
-                on_epoch=not is_train,
-            )
-        self._log_optimizer_lrs(stage=stage, on_step=is_train, on_epoch=not is_train)
+        is_val = stage == "val"
+        batch_size = int(batch.mix_A.shape[0])
+        log_kwargs = {
+            "on_step": is_train,
+            "on_epoch": is_val,
+            "sync_dist": is_val,
+            "batch_size": batch_size,
+        }
+        self.log(f"{stage}/loss", objective_total, prog_bar=True, **log_kwargs)
+        self.log(f"{stage}/objective_total", objective_total, **log_kwargs)
+        self.log(f"{stage}/objective/sep_term", objective_sep_term, **log_kwargs)
+        self.log(f"{stage}/objective/asid_term", objective_asid_term, **log_kwargs)
+        self.log(f"{stage}/loss_raw/sep", sep_loss, **log_kwargs)
+        self.log(f"{stage}/loss_raw/asid", asid_output.loss, **log_kwargs)
+        self.log(f"{stage}/lambda_sep", float(self.lambda_sep), **log_kwargs)
+        self.log(f"{stage}/lambda_asid", float(lambda_asid), **log_kwargs)
+        if is_val:
+            self._log_val_stem_metrics(stage=stage, sep_output=sep_output, asid_output=asid_output, device=objective_total.device)
+        else:
+            self._log_train_stem_metrics(stage=stage, sep_output=sep_output, asid_output=asid_output, log_kwargs=log_kwargs)
+        self._log_optimizer_lrs(stage=stage, on_step=is_train, on_epoch=not is_train, batch_size=batch_size)
 
         return StepOutput(
             loss=objective_total,

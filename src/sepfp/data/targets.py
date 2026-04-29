@@ -13,12 +13,21 @@ def _apply_effect_to_sources(
     sample_rate: int,
     effect_params,
     apply_effects: Callable[[torch.Tensor, int, object], torch.Tensor] | None,
+    device: torch.device,
 ) -> list[torch.Tensor]:
     if not effect_params.ops:
-        return [source.audio.mean(dim=0) if source.audio.ndim > 1 else source.audio for source in sources]
+        outputs = []
+        for source in sources:
+            audio = source.audio.mean(dim=0) if source.audio.ndim > 1 else source.audio
+            outputs.append(audio.to(device=device))
+        return outputs
     if apply_effects is None:
         raise RuntimeError("Effect parameters are present but no effect applier was provided")
-    return [apply_effects(source.audio, sample_rate, effect_params) for source in sources]
+    outputs = []
+    for source in sources:
+        effected = apply_effects(source.audio.to(device=device), sample_rate, effect_params)
+        outputs.append(effected.to(device=device))
+    return outputs
 
 
 def _complex_sum(components: list[torch.Tensor]) -> torch.Tensor:
@@ -45,6 +54,7 @@ def build_sep_targets(
     art_targets: dict[str, StemBatch] = {}
     ref_targets: dict[str, StemBatch] = {}
     batch_size = batch.mix_A.size(0)
+    device = batch.mix_AB.device
 
     for stem_idx, stem in enumerate(stems):
         art_sample_idx = torch.nonzero(art_ctx.active_mask[:, stem_idx], as_tuple=False).flatten()
@@ -62,6 +72,7 @@ def build_sep_targets(
                     sample_rate,
                     batch.effect_params_A[sample_idx],
                     apply_effects,
+                    device,
                 ):
                     complex_spec = vqt_transform(audio.unsqueeze(0)).squeeze(0)
                     crop, _ = tracked_extract_random_blocks(
@@ -77,6 +88,7 @@ def build_sep_targets(
                     sample_rate,
                     batch.effect_params_B[b_src],
                     apply_effects,
+                    device,
                 ):
                     complex_spec = vqt_transform(audio.unsqueeze(0)).squeeze(0)
                     crop, _ = tracked_extract_random_blocks(
@@ -109,6 +121,7 @@ def build_sep_targets(
                     sample_rate,
                     batch.effect_params_AB[sample_idx],
                     apply_effects,
+                    device,
                 ):
                     complex_spec = vqt_transform(audio.unsqueeze(0)).squeeze(0)
                     crop, _ = tracked_stretch_and_crop(
@@ -118,6 +131,7 @@ def build_sep_targets(
                         i=int(ref_ctx.crop_meta["i"][sample_idx].item()),
                         j=int(ref_ctx.crop_meta["j"][sample_idx].item()),
                         s=stretch,
+                        pad_left=ref_ctx.crop_meta["pad_left"][sample_idx],
                     )
                     components.append(crop.squeeze(0))
 

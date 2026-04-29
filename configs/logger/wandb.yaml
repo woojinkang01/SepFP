@@ -1,12 +1,12 @@
 wandb:
   _target_: lightning.pytorch.loggers.wandb.WandbLogger
   project: sepfp
-  name: sepfp-0428-independent-mask
+  name: sepfp-0429-base-run
   save_dir: .
   offline: false
   log_model: false
   save_code: true
   group: source-query-linear-mask
-  tags: [full, moisesdb, train208-val32, linear-mag-mask, active-softmax, 2x1080ti]
+  tags: [full, moisesdb, train208-val32, linear-mag-mask, separate-projector]
   job_type: train
   prefix: ""
