@@ -186,6 +186,7 @@ Current full profile:
   - `asid_projectors`: `lr=1e-5` for per-stem projectors
   - `asid_temperature`: `lr=1e-5` for InfoNCE temperature
 - `lambda_sep: 100.0`
+- `asid_gradient_route: projector_only`
 - `mask_mode: independent_capped`
 - `max_mask: 2.0`
 - global `batch_size: 8`

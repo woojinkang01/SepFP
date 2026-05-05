@@ -1,12 +1,12 @@
 defaults:
-  - data: default
-  - model: sepfp
+  - data: full
+  - model: sepfp_route_evidence
   - loss: sepfp
   - optimizer: default
   - scheduler: null
-  - trainer: default
-  - callbacks: default
-  - logger: null
+  - trainer: full_route_evidence
+  - callbacks: full
+  - logger: wandb
   - _self_
 
 task_name: train_sepfp

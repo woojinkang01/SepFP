@@ -46,7 +46,9 @@ class EvidenceProjector(nn.Module):
             nn.Linear(hidden_channels, out_dim, bias=False),
         )
 
-    def forward(self, u: torch.Tensor) -> torch.Tensor:
-        h = self.pre(detach_evidence_for_asid(u))
+    def forward(self, u: torch.Tensor, *, detach_input: bool = True) -> torch.Tensor:
+        if detach_input:
+            u = detach_evidence_for_asid(u)
+        h = self.pre(u)
         z = self.proj(self.pool(h))
         return F.normalize(z, dim=-1)

@@ -1,5 +1,5 @@
 stems: [vocals, drums, bass, guitar, piano, others]
-asid_gradient_route: projector_only
+asid_gradient_route: evidence
 transform:
   _target_: sepfp.data.vqt.VQT
   sr: ${data.dataset.sample_rate}

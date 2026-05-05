@@ -29,7 +29,7 @@ validation_dataset:
 norm_stats: [0.0, 1.0]
 
 dataloader:
-  batch_size: 16
+  batch_size: 12
   num_workers: 2
   pin_memory: true
   persistent_workers: true

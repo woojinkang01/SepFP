@@ -251,3 +251,70 @@ def test_asid_loss_updates_multiple_active_stem_projectors_only():
     assert _has_grad(model.projectors["drums"].parameters())
     for stem in ("bass", "guitar", "piano", "others"):
         assert _has_no_grad(model.projectors[stem].parameters())
+
+
+def test_evidence_asid_gradient_route_updates_evidence_but_not_encoder_or_decoder():
+    batch = 2
+    active_mask = torch.tensor(
+        [
+            [True, True, False, False, False, False],
+            [True, True, False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    ctx = _ctx(batch, active_mask)
+    model = SepFPModel(asid_gradient_route="evidence")
+    outputs = model.forward_branch(ctx)
+    pos_masks = {
+        "vocals": torch.eye(batch, dtype=torch.bool),
+        "drums": torch.eye(batch, dtype=torch.bool),
+    }
+    loss = MultiPositiveInfoNCELoss(temperature=0.1, trainable=False)(
+        outputs.stem_embeds,
+        outputs.stem_embeds,
+        pos_masks,
+    ).loss
+
+    model.zero_grad(set_to_none=True)
+    loss.backward()
+
+    assert _has_no_grad(model.encoder.parameters())
+    assert _has_grad(model.evidence.parameters())
+    assert _has_no_grad(model.decoder.parameters())
+    assert _has_grad(model.projectors["vocals"].parameters())
+    assert _has_grad(model.projectors["drums"].parameters())
+    for stem in ("bass", "guitar", "piano", "others"):
+        assert _has_no_grad(model.projectors[stem].parameters())
+
+
+def test_asid_gradient_route_does_not_change_state_dict_keys():
+    baseline = SepFPModel(asid_gradient_route="projector_only")
+    evidence_route = SepFPModel(asid_gradient_route="evidence")
+
+    assert baseline.state_dict().keys() == evidence_route.state_dict().keys()
+
+
+def test_evidence_asid_gradient_route_does_not_double_update_evidence_batchnorm_stats():
+    batch = 2
+    active_mask = torch.tensor(
+        [
+            [True, True, False, False, False, False],
+            [True, True, False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    ctx = _ctx(batch, active_mask)
+    baseline = SepFPModel(asid_gradient_route="projector_only")
+    evidence_route = SepFPModel(asid_gradient_route="evidence")
+    evidence_route.load_state_dict(baseline.state_dict())
+    baseline.train()
+    evidence_route.train()
+
+    baseline.forward_branch(ctx)
+    evidence_route.forward_branch(ctx)
+
+    baseline_buffers = dict(baseline.evidence.named_buffers())
+    evidence_route_buffers = dict(evidence_route.evidence.named_buffers())
+    for name, baseline_buffer in baseline_buffers.items():
+        if "running_" in name or "num_batches_tracked" in name:
+            assert torch.equal(baseline_buffer, evidence_route_buffers[name])

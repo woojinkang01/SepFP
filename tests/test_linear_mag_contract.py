@@ -219,5 +219,5 @@ def test_sep_targets_move_nested_stem_audio_to_batch_device():
         stems=("bass",),
     )
 
-    assert art_targets["bass"].tensor.device == device
-    assert ref_targets["bass"].tensor.device == device
+    assert art_targets["bass"].tensor.device.type == device.type
+    assert ref_targets["bass"].tensor.device.type == device.type

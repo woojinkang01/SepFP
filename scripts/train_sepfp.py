@@ -35,6 +35,7 @@ def main(cfg: DictConfig) -> None:
         projector_out_dim=cfg.model.projector.out_dim,
         mask_mode=cfg.model.decoder.get("mask_mode", "active_softmax"),
         max_mask=cfg.model.decoder.get("max_mask", 2.0),
+        asid_gradient_route=cfg.model.get("asid_gradient_route", "projector_only"),
     )
     module = SepFPLightningModule(
         model=model,

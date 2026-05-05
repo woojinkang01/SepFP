@@ -39,6 +39,13 @@ L_sep  -> TFEvidenceEncoder + SourceQueryEvidenceExtractor + LinearMagMaskDecode
 L_asid -> per-stem EvidenceProjector_s only
 ```
 
+Implemented option:
+
+```text
+model.asid_gradient_route: projector_only  # default baseline
+model.asid_gradient_route: evidence        # L_asid -> SourceQueryEvidenceExtractor + EvidenceProjector_s
+```
+
 Current branch decision:
 
 ```text
@@ -68,13 +75,13 @@ Good source separation features are not guaranteed to be good retrieval features
 
 Choice A is the cleanest control but may bottleneck retrieval. If `L_sep` removes identity-relevant cues before the projector sees them, `L_asid` cannot recover them. Splitting the projector by stem removes cross-stem projector interference, but it does not let ASID reshape `u_s`.
 
-Choice B is the most plausible next experiment. It lets ASID influence the learned source query, attention, and FiLM/gating that create `u_s`, while keeping the shared TF encoder separation-driven. The risk is that `u_s` starts optimizing identity discrimination at the expense of mask quality.
+Choice B is available through `model.asid_gradient_route=evidence`. It lets ASID influence the learned source query, attention, and FiLM/gating that create `u_s`, while keeping the shared TF encoder separation-driven. The risk is that `u_s` starts optimizing identity discrimination at the expense of mask quality.
 
 Choice C is highest-risk. It maximizes ASID influence, but failures become hard to diagnose: a change in `sep_loss` or retrieval may come from encoder drift, evidence routing, mask behavior, or loss-scale interaction. It can also encourage shortcut features tied to augmentation/provenance artifacts rather than robust source identity.
 
 ### Implementation Note
 
-Simply removing `u.detach()` in the projector implements Choice C, not Choice B. Choice B requires an explicit gradient boundary such as using `features.detach()` for the ASID evidence path, or otherwise separating the ASID route from the separation route.
+Simply removing `u.detach()` in the projector implements Choice C, not Choice B. The implemented Choice B path recomputes ASID evidence from `features.detach()` and sends it through the projector without detaching projector input, so ASID gradients reach `SourceQueryEvidenceExtractor` but not `TFEvidenceEncoder`.
 
 ### Recommended Ablation Order
 

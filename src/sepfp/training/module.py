@@ -95,6 +95,21 @@ class SepFPLightningModule(LightningModule):
             )
         return merged
 
+    @staticmethod
+    def _move_stem_batches(
+        batches: dict[str, StemBatch],
+        device: torch.device | str,
+    ) -> dict[str, StemBatch]:
+        return {
+            stem: StemBatch(
+                sample_idx=batch.sample_idx.to(device=device),
+                tensor=batch.tensor.to(device=device),
+                provenance=batch.provenance,
+                extras=batch.extras,
+            )
+            for stem, batch in batches.items()
+        }
+
     def _lambda_asid(self) -> float:
         if self.lambda_asid_warmup_epochs <= 0:
             return self.lambda_asid_final
@@ -232,11 +247,6 @@ class SepFPLightningModule(LightningModule):
                 time_stretch=self.time_stretch,
                 stems=self.stems,
             )
-
-        art_out = self.model.forward_branch(art_ctx)
-        ref_out = self.model.forward_branch(ref_ctx)
-
-        with torch.no_grad():
             art_targets, ref_targets = build_sep_targets(
                 batch=batch,
                 art_ctx=art_ctx,
@@ -250,6 +260,14 @@ class SepFPLightningModule(LightningModule):
                 stems=self.stems,
             )
             pos_masks = build_positive_masks(art_ctx, ref_ctx, stems=self.stems)
+            art_targets = self._move_stem_batches(art_targets, device="cpu")
+            ref_targets = self._move_stem_batches(ref_targets, device="cpu")
+
+        art_out = self.model.forward_branch(art_ctx)
+        ref_out = self.model.forward_branch(ref_ctx)
+        target_device = art_ctx.x_input.device
+        art_targets = self._move_stem_batches(art_targets, device=target_device)
+        ref_targets = self._move_stem_batches(ref_targets, device=target_device)
 
         sep_output = self.sep_loss(
             pred_by_stem=self._merge_stem_batches(art_out.stem_preds, ref_out.stem_preds),

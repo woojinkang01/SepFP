@@ -1,12 +1,12 @@
 wandb:
   _target_: lightning.pytorch.loggers.wandb.WandbLogger
   project: sepfp
-  name: sepfp-0429-base-run
+  name: sepfp-0502-asid-gradient-evidence
   save_dir: .
   offline: false
   log_model: false
   save_code: true
   group: source-query-linear-mask
-  tags: [full, moisesdb, train208-val32, linear-mag-mask, separate-projector]
+  tags: [full, moisesdb, train208-val32, linear-mag-mask, separate-projector, gradient-evidence]
   job_type: train
   prefix: ""

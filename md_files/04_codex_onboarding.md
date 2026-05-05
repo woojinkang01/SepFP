@@ -117,6 +117,14 @@ u_s -> detach -> EvidenceProjector_s -> z_s -> L_asid
 
 So `L_asid` currently updates the active stem's projector only. Encoder, source-query evidence extractor, and decoder are trained directly by `L_sep`. Inactive stem projectors should not be called in that step.
 
+Optional ablation:
+
+```text
+model.asid_gradient_route=evidence
+```
+
+This routes `L_asid` through `SourceQueryEvidenceExtractor` and active `EvidenceProjector_s` while keeping `TFEvidenceEncoder` outside the ASID gradient path.
+
 ### Mask Modes
 
 Current config default:

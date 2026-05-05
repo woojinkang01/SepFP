@@ -1,6 +1,7 @@
 import torch
 
 from sepfp.data.batch_types import BranchEffectParams, EffectOp, SepFPTrainBatch, StemSource
+from sepfp.models.sepfp_model import SepFPModel
 from sepfp.training.module import SepFPLightningModule
 
 
@@ -10,6 +11,26 @@ class DummyComplexTransform(torch.nn.Module):
         spec = torch.zeros(batch, 288, 256, 2)
         spec[..., 0] = audio[:, :1].view(batch, 1, 1)
         return spec
+
+
+class RecordingComplexTransform(DummyComplexTransform):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self.events = events
+
+    def forward(self, audio: torch.Tensor) -> torch.Tensor:
+        self.events.append("transform")
+        return super().forward(audio)
+
+
+class RecordingSepFPModel(SepFPModel):
+    def __init__(self, events: list[str]) -> None:
+        super().__init__()
+        self.events = events
+
+    def forward_branch(self, ctx):
+        self.events.append(f"forward:{ctx.name}")
+        return super().forward_branch(ctx)
 
 
 def _stem_source(value: float, provenance_id: str) -> StemSource:
@@ -86,6 +107,24 @@ def test_training_step_smoke():
     assert torch.isfinite(output.sep_loss)
     assert torch.isfinite(output.asid_loss)
     assert torch.allclose(output.loss, 100.0 * output.sep_loss + output.asid_loss)
+
+
+def test_sep_targets_are_built_before_model_forward():
+    events: list[str] = []
+    batch = _make_batch()
+    module = SepFPLightningModule(
+        model=RecordingSepFPModel(events),
+        transform=RecordingComplexTransform(events),
+        time_stretch=None,
+        lambda_asid_warmup_epochs=0,
+    )
+
+    output = module.shared_step(batch, stage="smoke")
+
+    assert torch.isfinite(output.loss)
+    first_forward = min(idx for idx, event in enumerate(events) if event.startswith("forward:"))
+    last_transform = max(idx for idx, event in enumerate(events) if event == "transform")
+    assert last_transform < first_forward
 
 
 def test_validation_stem_metric_keys_are_fixed_for_sparse_stems():
