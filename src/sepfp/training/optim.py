@@ -16,26 +16,55 @@ def build_sepfp_param_groups(
     lr_asid_temperature: float = 1e-5,
     weight_decay: float = 0.01,
 ) -> list[dict]:
-    sep_params = _trainable_params(module.model.encoder.parameters())
-    sep_params += _trainable_params(module.model.evidence.parameters())
-    sep_params += _trainable_params(module.model.decoder.parameters())
+    encoder_params = _trainable_params(module.model.encoder.parameters())
+    evidence_params = _trainable_params(module.model.evidence.parameters())
+    decoder_params = _trainable_params(module.model.decoder.parameters())
     projector_params = _trainable_params(module.model.projectors.parameters())
     temperature_params = _trainable_params([module.asid_loss.log_temperature])
 
-    groups = [
-        {
-            "name": "sep",
-            "params": sep_params,
-            "lr": lr_sep,
-            "weight_decay": weight_decay,
-        },
-        {
-            "name": "asid_projectors",
-            "params": projector_params,
-            "lr": lr_asid,
-            "weight_decay": weight_decay,
-        },
-    ]
+    groups = []
+    if getattr(module, "compute_separation", True):
+        sep_params = encoder_params + evidence_params + decoder_params
+        if sep_params:
+            groups.append(
+                {
+                    "name": "sep",
+                    "params": sep_params,
+                    "lr": lr_sep,
+                    "weight_decay": weight_decay,
+                }
+            )
+    else:
+        if encoder_params:
+            groups.append(
+                {
+                    "name": "asid_encoder",
+                    "params": encoder_params,
+                    "lr": lr_sep,
+                    "weight_decay": weight_decay,
+                }
+            )
+        if evidence_params:
+            groups.append(
+                {
+                    "name": "asid_evidence",
+                    "params": evidence_params,
+                    "lr": lr_sep,
+                    "weight_decay": weight_decay,
+                }
+            )
+        if decoder_params:
+            raise ValueError("Decoder has trainable parameters while compute_separation=False.")
+
+    if projector_params:
+        groups.append(
+            {
+                "name": "asid_projectors",
+                "params": projector_params,
+                "lr": lr_asid,
+                "weight_decay": weight_decay,
+            }
+        )
     if temperature_params:
         groups.append(
             {
@@ -45,6 +74,9 @@ def build_sepfp_param_groups(
                 "weight_decay": 0.0,
             }
         )
+
+    if not groups:
+        raise ValueError("No trainable parameters were found for the SepFP optimizer.")
 
     grouped_param_ids = [id(parameter) for group in groups for parameter in group["params"]]
     if len(grouped_param_ids) != len(set(grouped_param_ids)):

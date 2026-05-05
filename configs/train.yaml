@@ -1,11 +1,12 @@
 defaults:
-  - data: full
+  - data: full_effect
   - model: sepfp_route_evidence
   - loss: sepfp
+  - phase: joint
   - optimizer: default
   - scheduler: null
   - trainer: full_route_evidence
-  - callbacks: full
+  - callbacks: full_probe
   - logger: wandb
   - _self_
 

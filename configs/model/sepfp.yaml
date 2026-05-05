@@ -13,6 +13,12 @@ transform:
 block_size: [252, 256]
 time_stretch: [0.7, 1.5]
 pitch_shift: true
+crop:
+  ref_time_crop_mode: center
+  ref_padding_mode: center
+  art_time_crop_mode: center_jitter
+  art_time_jitter_seconds: 0.5
+  art_share_time_jitter: true
 encoder:
   out_channels: 256
 evidence:

@@ -24,13 +24,13 @@ class RecordingComplexTransform(DummyComplexTransform):
 
 
 class RecordingSepFPModel(SepFPModel):
-    def __init__(self, events: list[str]) -> None:
-        super().__init__()
+    def __init__(self, events: list[str], **kwargs) -> None:
+        super().__init__(**kwargs)
         self.events = events
 
-    def forward_branch(self, ctx):
+    def forward_branch(self, ctx, **kwargs):
         self.events.append(f"forward:{ctx.name}")
-        return super().forward_branch(ctx)
+        return super().forward_branch(ctx, **kwargs)
 
 
 def _stem_source(value: float, provenance_id: str) -> StemSource:
@@ -125,6 +125,43 @@ def test_sep_targets_are_built_before_model_forward():
     first_forward = min(idx for idx, event in enumerate(events) if event.startswith("forward:"))
     last_transform = max(idx for idx, event in enumerate(events) if event == "transform")
     assert last_transform < first_forward
+
+
+def test_asid_only_training_step_skips_sep_targets_and_decoder():
+    events: list[str] = []
+    batch = _make_batch()
+    model = RecordingSepFPModel(events, asid_gradient_route="evidence")
+    decoder_calls = 0
+
+    def count_decoder(_module, _inputs, _output):
+        nonlocal decoder_calls
+        decoder_calls += 1
+
+    hook = model.decoder.register_forward_hook(count_decoder)
+    module = SepFPLightningModule(
+        model=model,
+        transform=RecordingComplexTransform(events),
+        time_stretch=None,
+        lambda_sep=100.0,
+        lambda_asid_warmup_epochs=0,
+        compute_separation=False,
+        train_encoder=False,
+        train_evidence=True,
+        train_decoder=False,
+        train_projectors=True,
+    )
+    try:
+        output = module.shared_step(batch, stage="smoke")
+    finally:
+        hook.remove()
+
+    assert torch.isfinite(output.loss)
+    assert torch.isfinite(output.asid_loss)
+    assert output.sep_loss.item() == 0.0
+    assert output.per_stem_sep_loss == {}
+    assert torch.allclose(output.loss, output.asid_loss)
+    assert events.count("transform") == 3
+    assert decoder_calls == 0
 
 
 def test_validation_stem_metric_keys_are_fixed_for_sparse_stems():

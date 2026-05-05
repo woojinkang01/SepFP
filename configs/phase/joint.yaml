@@ -1,0 +1,9 @@
+name: joint
+compute_separation: true
+lambda_sep: null
+asid_gradient_route: null
+train_encoder: true
+train_evidence: true
+train_decoder: true
+train_projectors: true
+train_asid_temperature: null

@@ -33,18 +33,56 @@ def generate_indices(
     return torch.randint(0, max_i, (batch_size,), dtype=torch.long, device=device)
 
 
+def generate_time_crop_indices(
+    width: int,
+    block_w: int,
+    batch_size: int,
+    mode: str = "random",
+    max_jitter_frames: int | None = None,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    device = device or torch.device("cpu")
+    max_start = max(int(width) - int(block_w), 0)
+    if mode == "random":
+        return torch.randint(max_start + 1, (batch_size,), dtype=torch.long, device=device)
+
+    center = max_start // 2
+    if mode == "center":
+        return torch.full((batch_size,), center, dtype=torch.long, device=device)
+
+    if mode == "center_jitter":
+        jitter = max(int(max_jitter_frames or 0), 0)
+        low = max(center - jitter, 0)
+        high = min(center + jitter, max_start)
+        return torch.randint(high - low + 1, (batch_size,), dtype=torch.long, device=device) + low
+
+    raise ValueError(f"Unknown time crop mode: {mode}")
+
+
 def tracked_extract_random_blocks(
     x: torch.Tensor,
     block_size: tuple[int, int],
     i: torch.Tensor | int | None = None,
     j: torch.Tensor | int | None = None,
+    time_crop_mode: str = "random",
+    max_time_jitter_frames: int | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     batch, height, width, _ = x.shape
     block_h, block_w = block_size
     max_i = height - block_h + 1
-    max_j = width - block_w + 1
     i_idx = generate_indices(max_i, batch, i=i, device=x.device)
-    j_idx = generate_indices(max_j, batch, i=j, device=x.device)
+    if j is None:
+        j_idx = generate_time_crop_indices(
+            width=width,
+            block_w=block_w,
+            batch_size=batch,
+            mode=time_crop_mode,
+            max_jitter_frames=max_time_jitter_frames,
+            device=x.device,
+        )
+    else:
+        j_idx = generate_indices(max(width - block_w + 1, 1), batch, i=j, device=x.device)
+        j_idx = j_idx.clamp(0, max(width - block_w, 0))
 
     crops = []
     for batch_idx in range(batch):
@@ -62,6 +100,9 @@ def tracked_stretch_and_crop(
     s: torch.Tensor | None = None,
     random_padding: bool = True,
     pad_left: torch.Tensor | int | None = None,
+    time_crop_mode: str = "random",
+    padding_mode: str = "random",
+    max_time_jitter_frames: int | None = None,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     batch = x.size(0)
     block_h, block_w = block_size
@@ -83,8 +124,12 @@ def tracked_stretch_and_crop(
                 left_padding = int(pad_left[batch_idx].item() if pad_left.ndim > 0 else pad_left.item())
             elif isinstance(pad_left, int):
                 left_padding = pad_left
-            else:
+            elif padding_mode == "center":
+                left_padding = total_padding // 2
+            elif padding_mode == "random":
                 left_padding = int(torch.randint(total_padding + 1, (1,), device=x.device).item()) if random_padding else 0
+            else:
+                raise ValueError(f"Unknown padding mode: {padding_mode}")
             left_padding = max(0, min(left_padding, total_padding))
             right_padding = total_padding - left_padding
             stretched = F.pad(stretched, (left_padding, right_padding))
@@ -103,7 +148,14 @@ def tracked_stretch_and_crop(
         elif isinstance(j, int):
             offset_j = torch.tensor(min(j, max_w), device=x.device)
         else:
-            offset_j = torch.randint(max_w + 1, (1,), device=x.device)[0]
+            offset_j = generate_time_crop_indices(
+                width=new_width,
+                block_w=block_w,
+                batch_size=1,
+                mode=time_crop_mode,
+                max_jitter_frames=max_time_jitter_frames,
+                device=x.device,
+            )[0]
 
         out.append(stretched[:, offset_i : offset_i + block_h, offset_j : offset_j + block_w])
         i_indices.append(offset_i)
@@ -181,10 +233,43 @@ def build_art_branch(
     pitch_shift: bool,
     crop_size: int,
     stems: tuple[str, ...] = STEM_ORDER,
+    time_crop_mode: str = "random",
+    max_time_jitter_frames: int | None = None,
+    share_time_jitter: bool = False,
 ) -> BranchContext:
     pitch_i = None if pitch_shift else crop_size
-    x_A_crop, meta_A = tracked_extract_random_blocks(x_A_complex, block_size, i=pitch_i)
-    x_B_crop, meta_B = tracked_extract_random_blocks(x_B_complex, block_size, i=pitch_i)
+    j_A = None
+    j_B = None
+    if share_time_jitter:
+        batch_size = x_A_complex.size(0)
+        _, block_w = block_size
+        j_art = generate_time_crop_indices(
+            width=x_A_complex.size(2),
+            block_w=block_w,
+            batch_size=batch_size,
+            mode=time_crop_mode,
+            max_jitter_frames=max_time_jitter_frames,
+            device=x_A_complex.device,
+        )
+        j_A = j_art
+        j_B = torch.roll(j_art, shifts=-1)
+
+    x_A_crop, meta_A = tracked_extract_random_blocks(
+        x_A_complex,
+        block_size,
+        i=pitch_i,
+        j=j_A,
+        time_crop_mode=time_crop_mode,
+        max_time_jitter_frames=max_time_jitter_frames,
+    )
+    x_B_crop, meta_B = tracked_extract_random_blocks(
+        x_B_complex,
+        block_size,
+        i=pitch_i,
+        j=j_B,
+        time_crop_mode=time_crop_mode,
+        max_time_jitter_frames=max_time_jitter_frames,
+    )
 
     x_B_roll = x_B_crop.roll(1, dims=0)
     x_art_complex = x_A_crop + x_B_roll
@@ -224,9 +309,16 @@ def build_ref_branch(
     crop_size: int,
     time_stretch: tuple[float, float] | None,
     stems: tuple[str, ...] = STEM_ORDER,
+    time_crop_mode: str = "random",
+    padding_mode: str = "random",
 ) -> BranchContext:
     if time_stretch is None:
-        x_ref_complex, crop_meta = tracked_extract_random_blocks(x_AB_complex, block_size, i=crop_size)
+        x_ref_complex, crop_meta = tracked_extract_random_blocks(
+            x_AB_complex,
+            block_size,
+            i=crop_size,
+            time_crop_mode=time_crop_mode,
+        )
         crop_meta["stretch"] = torch.ones(x_ref_complex.size(0), device=x_AB_complex.device)
         crop_meta["pad_left"] = torch.zeros(x_ref_complex.size(0), dtype=torch.long, device=x_AB_complex.device)
         crop_meta["pad_right"] = torch.zeros(x_ref_complex.size(0), dtype=torch.long, device=x_AB_complex.device)
@@ -236,6 +328,8 @@ def build_ref_branch(
             block_size=block_size,
             stretch_factor=time_stretch,
             i=crop_size,
+            time_crop_mode=time_crop_mode,
+            padding_mode=padding_mode,
         )
 
     x_ref_input, gain_ref = normalize_logmag_with_gain(x_ref_complex, mean=mean, std=std, return_gain=True)

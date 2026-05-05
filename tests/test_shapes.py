@@ -115,6 +115,35 @@ def test_independent_capped_masks_do_not_force_sum_to_one():
         assert not torch.allclose(mask_sum, torch.ones_like(mask_sum), atol=1e-3)
 
 
+def test_forward_branch_can_skip_separation_decoder():
+    batch = 2
+    active_mask = torch.tensor(
+        [
+            [True, False, False, False, False, False],
+            [True, False, False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    ctx = _ctx(batch, active_mask)
+    model = SepFPModel(mask_mode="independent_capped")
+    call_count = 0
+
+    def _count_decoder(_module, _inputs, _output):
+        nonlocal call_count
+        call_count += 1
+
+    hook = model.decoder.register_forward_hook(_count_decoder)
+    try:
+        outputs = model.forward_branch(ctx, compute_separation=False)
+    finally:
+        hook.remove()
+
+    assert call_count == 0
+    assert outputs.stem_preds == {}
+    assert set(outputs.stem_embeds) == {"vocals"}
+    assert torch.allclose(outputs.stem_embeds["vocals"].tensor.norm(dim=-1), torch.ones(batch), atol=1e-5)
+
+
 def test_model_respects_configurable_dimensions():
     batch = 2
     active_mask = torch.tensor(
@@ -287,11 +316,45 @@ def test_evidence_asid_gradient_route_updates_evidence_but_not_encoder_or_decode
         assert _has_no_grad(model.projectors[stem].parameters())
 
 
+def test_full_asid_gradient_route_updates_encoder_and_evidence():
+    batch = 2
+    active_mask = torch.tensor(
+        [
+            [True, True, False, False, False, False],
+            [True, True, False, False, False, False],
+        ],
+        dtype=torch.bool,
+    )
+    ctx = _ctx(batch, active_mask)
+    model = SepFPModel(asid_gradient_route="full")
+    outputs = model.forward_branch(ctx, compute_separation=False)
+    pos_masks = {
+        "vocals": torch.eye(batch, dtype=torch.bool),
+        "drums": torch.eye(batch, dtype=torch.bool),
+    }
+    loss = MultiPositiveInfoNCELoss(temperature=0.1, trainable=False)(
+        outputs.stem_embeds,
+        outputs.stem_embeds,
+        pos_masks,
+    ).loss
+
+    model.zero_grad(set_to_none=True)
+    loss.backward()
+
+    assert _has_grad(model.encoder.parameters())
+    assert _has_grad(model.evidence.parameters())
+    assert _has_no_grad(model.decoder.parameters())
+    assert _has_grad(model.projectors["vocals"].parameters())
+    assert _has_grad(model.projectors["drums"].parameters())
+
+
 def test_asid_gradient_route_does_not_change_state_dict_keys():
     baseline = SepFPModel(asid_gradient_route="projector_only")
     evidence_route = SepFPModel(asid_gradient_route="evidence")
+    full_route = SepFPModel(asid_gradient_route="full")
 
     assert baseline.state_dict().keys() == evidence_route.state_dict().keys()
+    assert baseline.state_dict().keys() == full_route.state_dict().keys()
 
 
 def test_evidence_asid_gradient_route_does_not_double_update_evidence_batchnorm_stats():

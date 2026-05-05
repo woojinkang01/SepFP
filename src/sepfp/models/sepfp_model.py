@@ -24,7 +24,7 @@ class BranchOutputs:
 
 class SepFPModel(nn.Module):
     VALID_MASK_MODES = {"active_softmax", "independent_sigmoid", "independent_softplus", "independent_capped"}
-    VALID_ASID_GRADIENT_ROUTES = {"projector_only", "evidence"}
+    VALID_ASID_GRADIENT_ROUTES = {"projector_only", "evidence", "full"}
 
     def __init__(
         self,
@@ -115,49 +115,58 @@ class SepFPModel(nn.Module):
         buffers = {name: buffer.detach().clone() for name, buffer in self.evidence.named_buffers()}
         return functional_call(self.evidence, (params, buffers), (features.detach(), active_mask))
 
-    def forward_branch(self, ctx: BranchContext) -> BranchOutputs:
+    def forward_branch(self, ctx: BranchContext, *, compute_separation: bool = True) -> BranchOutputs:
         features = self.encoder(ctx.x_input)
-        stem_latents = self.evidence(features, ctx.active_mask)
-        asid_stem_latents = stem_latents
-        asid_projector_detach = True
-        if self.asid_gradient_route == "evidence":
-            asid_stem_latents = self._evidence_for_asid(features, ctx.active_mask)
+        if not compute_separation and self.asid_gradient_route == "evidence":
+            stem_latents = self.evidence(features.detach(), ctx.active_mask)
+            asid_stem_latents = stem_latents
             asid_projector_detach = False
+        else:
+            stem_latents = self.evidence(features, ctx.active_mask)
+            asid_stem_latents = stem_latents
+            asid_projector_detach = True
+            if self.asid_gradient_route == "evidence":
+                asid_stem_latents = self._evidence_for_asid(features, ctx.active_mask)
+                asid_projector_detach = False
+            elif self.asid_gradient_route == "full":
+                asid_projector_detach = False
 
         logits_by_stem: dict[str, StemBatch] = {}
         stem_embeds: dict[str, StemBatch] = {}
         for stem, stem_batch in stem_latents.items():
-            logits = self.decoder(stem_batch.tensor)
             asid_stem_batch = asid_stem_latents[stem]
             z = self.projectors[stem](asid_stem_batch.tensor, detach_input=asid_projector_detach)
-            logits_by_stem[stem] = StemBatch(sample_idx=stem_batch.sample_idx, tensor=logits)
+            if compute_separation:
+                logits = self.decoder(stem_batch.tensor)
+                logits_by_stem[stem] = StemBatch(sample_idx=stem_batch.sample_idx, tensor=logits)
             stem_embeds[stem] = StemBatch(
                 sample_idx=asid_stem_batch.sample_idx,
                 tensor=z,
                 provenance=tuple(ctx.provenance[idx].get(stem, ()) for idx in asid_stem_batch.sample_idx.tolist()),
             )
 
-        if self.mask_mode == "active_softmax":
-            masks_by_stem = self._active_softmax_masks(logits_by_stem, batch_size=ctx.x_input.size(0))
-        else:
-            masks_by_stem = self._independent_masks(logits_by_stem)
-
         stem_preds: dict[str, StemBatch] = {}
-        for stem, stem_batch in logits_by_stem.items():
-            sample_idx = stem_batch.sample_idx
-            carrier = ctx.x_linear_mag.to(stem_batch.tensor.device).index_select(0, sample_idx)
-            mask = masks_by_stem[stem]
-            pred = mask * carrier
-            stem_preds[stem] = StemBatch(
-                sample_idx=sample_idx,
-                tensor=pred,
-                provenance=tuple(ctx.provenance[idx].get(stem, ()) for idx in sample_idx.tolist()),
-                extras={
-                    "mask": mask.detach(),
-                    "mask_logits": stem_batch.tensor.detach(),
-                    "domain": "linear_mag",
-                },
-            )
+        if compute_separation:
+            if self.mask_mode == "active_softmax":
+                masks_by_stem = self._active_softmax_masks(logits_by_stem, batch_size=ctx.x_input.size(0))
+            else:
+                masks_by_stem = self._independent_masks(logits_by_stem)
+
+            for stem, stem_batch in logits_by_stem.items():
+                sample_idx = stem_batch.sample_idx
+                carrier = ctx.x_linear_mag.to(stem_batch.tensor.device).index_select(0, sample_idx)
+                mask = masks_by_stem[stem]
+                pred = mask * carrier
+                stem_preds[stem] = StemBatch(
+                    sample_idx=sample_idx,
+                    tensor=pred,
+                    provenance=tuple(ctx.provenance[idx].get(stem, ()) for idx in sample_idx.tolist()),
+                    extras={
+                        "mask": mask.detach(),
+                        "mask_logits": stem_batch.tensor.detach(),
+                        "domain": "linear_mag",
+                    },
+                )
 
         return BranchOutputs(
             features=features,

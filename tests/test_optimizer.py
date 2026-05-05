@@ -1,5 +1,6 @@
 import torch
 
+from sepfp.models.sepfp_model import SepFPModel
 from sepfp.training.module import SepFPLightningModule
 from sepfp.training.optim import build_sepfp_param_groups
 
@@ -55,3 +56,41 @@ def test_configure_optimizers_uses_named_param_group_lrs():
         "asid_projectors": 1e-5,
         "asid_temperature": 1e-5,
     }
+
+
+def test_asid_only_optimizer_groups_exclude_frozen_encoder_and_decoder():
+    module = SepFPLightningModule(
+        model=SepFPModel(asid_gradient_route="evidence"),
+        compute_separation=False,
+        train_encoder=False,
+        train_evidence=True,
+        train_decoder=False,
+        train_projectors=True,
+    )
+    groups = build_sepfp_param_groups(
+        module=module,
+        lr_sep=3e-6,
+        lr_asid=1e-5,
+        lr_asid_temperature=2e-5,
+        weight_decay=0.01,
+    )
+    by_name = {group["name"]: group for group in groups}
+
+    assert set(by_name) == {"asid_evidence", "asid_projectors", "asid_temperature"}
+    assert _param_ids(module.model.evidence.parameters()) == _param_ids(by_name["asid_evidence"]["params"])
+    assert _param_ids(module.model.projectors.parameters()) == _param_ids(by_name["asid_projectors"]["params"])
+    assert not any(parameter.requires_grad for parameter in module.model.encoder.parameters())
+    assert not any(parameter.requires_grad for parameter in module.model.decoder.parameters())
+
+
+def test_asid_only_phase_rejects_trainable_decoder():
+    try:
+        SepFPLightningModule(
+            model=SepFPModel(asid_gradient_route="evidence"),
+            compute_separation=False,
+            train_decoder=True,
+        )
+    except ValueError as exc:
+        assert "freeze the decoder" in str(exc)
+    else:
+        raise AssertionError("Expected ASID-only phase with trainable decoder to fail")

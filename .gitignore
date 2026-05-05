@@ -22,6 +22,7 @@ venv/
 /logs/
 /outputs/
 /checkpoints/
+/probe_eval/
 *.ckpt
 *.pt
 *.pth

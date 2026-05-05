@@ -10,7 +10,7 @@ import lightning as L
 
 from sepfp.compat import LightningModule
 from sepfp.data import STEM_ORDER
-from sepfp.data.batch_types import BranchContext, SepFPTrainBatch, StemBatch
+from sepfp.data.batch_types import BranchContext, SepFPTrainBatch, SeparationLossOutput, StemBatch
 from sepfp.data.preprocess import build_art_branch, build_ref_branch
 from sepfp.data.provenance import build_positive_masks
 from sepfp.data.targets import build_sep_targets
@@ -49,10 +49,22 @@ class SepFPLightningModule(LightningModule):
         lognorm_std: float = 1.0,
         pitch_crop_bins: int = 18,
         stems: tuple[str, ...] = STEM_ORDER,
+        art_time_crop_mode: str = "random",
+        art_max_time_jitter_frames: int | None = None,
+        art_share_time_jitter: bool = False,
+        ref_time_crop_mode: str = "random",
+        ref_padding_mode: str = "random",
         lambda_sep: float = 100.0,
         lambda_asid_final: float = 1.0,
         lambda_asid_warmup_epochs: int = 5,
         apply_effects: Callable[[torch.Tensor, int, object], torch.Tensor] | None = None,
+        phase_name: str = "joint",
+        compute_separation: bool = True,
+        train_encoder: bool = True,
+        train_evidence: bool = True,
+        train_decoder: bool = True,
+        train_projectors: bool = True,
+        train_asid_temperature: bool | None = None,
     ) -> None:
         super().__init__()
         self.model = model or SepFPModel(stems=stems)
@@ -69,10 +81,57 @@ class SepFPLightningModule(LightningModule):
         self.lognorm_std = lognorm_std
         self.pitch_crop_bins = pitch_crop_bins
         self.stems = stems
+        self.art_time_crop_mode = art_time_crop_mode
+        self.art_max_time_jitter_frames = art_max_time_jitter_frames
+        self.art_share_time_jitter = art_share_time_jitter
+        self.ref_time_crop_mode = ref_time_crop_mode
+        self.ref_padding_mode = ref_padding_mode
         self.lambda_sep = lambda_sep
         self.lambda_asid_final = lambda_asid_final
         self.lambda_asid_warmup_epochs = lambda_asid_warmup_epochs
         self.apply_effects = apply_effects
+        self.phase_name = phase_name
+        self.compute_separation = bool(compute_separation)
+        self.train_encoder = bool(train_encoder)
+        self.train_evidence = bool(train_evidence)
+        self.train_decoder = bool(train_decoder)
+        self.train_projectors = bool(train_projectors)
+        self.train_asid_temperature = train_asid_temperature
+        self._validate_phase_scope()
+        self._configure_trainable_scope()
+
+    def _validate_phase_scope(self) -> None:
+        if self.compute_separation:
+            return
+        if self.train_decoder:
+            raise ValueError("ASID-only phases must freeze the decoder when compute_separation=False.")
+        if self.train_evidence and self.model.asid_gradient_route not in {"evidence", "full"}:
+            raise ValueError("train_evidence=True with compute_separation=False requires asid_gradient_route='evidence' or 'full'.")
+        if self.train_encoder and self.model.asid_gradient_route != "full":
+            raise ValueError("train_encoder=True with compute_separation=False requires asid_gradient_route='full'.")
+
+    @staticmethod
+    def _set_module_trainable(module: nn.Module, trainable: bool) -> None:
+        for parameter in module.parameters():
+            parameter.requires_grad_(trainable)
+
+    def _configure_trainable_scope(self) -> None:
+        self._set_module_trainable(self.model.encoder, self.train_encoder)
+        self._set_module_trainable(self.model.evidence, self.train_evidence)
+        self._set_module_trainable(self.model.decoder, self.train_decoder)
+        self._set_module_trainable(self.model.projectors, self.train_projectors)
+        if self.train_asid_temperature is not None:
+            self.asid_loss.log_temperature.requires_grad_(bool(self.train_asid_temperature))
+
+    def _keep_frozen_modules_eval(self) -> None:
+        if not self.train_encoder:
+            self.model.encoder.eval()
+        if not self.train_evidence:
+            self.model.evidence.eval()
+        if not self.train_decoder:
+            self.model.decoder.eval()
+        if not self.train_projectors:
+            self.model.projectors.eval()
 
     def _crop_size(self) -> int:
         return self.pitch_crop_bins
@@ -221,6 +280,7 @@ class SepFPLightningModule(LightningModule):
             )
 
     def shared_step(self, batch: SepFPTrainBatch, stage: str = "train") -> StepOutput:
+        self._keep_frozen_modules_eval()
         with torch.no_grad():
             x_A_complex = self.transform(batch.mix_A)
             x_B_complex = self.transform(batch.mix_B)
@@ -236,6 +296,9 @@ class SepFPLightningModule(LightningModule):
                 pitch_shift=self.pitch_shift,
                 crop_size=self._crop_size(),
                 stems=self.stems,
+                time_crop_mode=self.art_time_crop_mode,
+                max_time_jitter_frames=self.art_max_time_jitter_frames,
+                share_time_jitter=self.art_share_time_jitter,
             )
             ref_ctx: BranchContext = build_ref_branch(
                 batch=batch,
@@ -246,33 +309,45 @@ class SepFPLightningModule(LightningModule):
                 crop_size=self._crop_size(),
                 time_stretch=self.time_stretch,
                 stems=self.stems,
-            )
-            art_targets, ref_targets = build_sep_targets(
-                batch=batch,
-                art_ctx=art_ctx,
-                ref_ctx=ref_ctx,
-                vqt_transform=self.transform,
-                apply_effects=self.apply_effects,
-                sample_rate=self.sample_rate,
-                block_size=self.block_size,
-                mean=self.lognorm_mean,
-                std=self.lognorm_std,
-                stems=self.stems,
+                time_crop_mode=self.ref_time_crop_mode,
+                padding_mode=self.ref_padding_mode,
             )
             pos_masks = build_positive_masks(art_ctx, ref_ctx, stems=self.stems)
-            art_targets = self._move_stem_batches(art_targets, device="cpu")
-            ref_targets = self._move_stem_batches(ref_targets, device="cpu")
+            if self.compute_separation:
+                art_targets, ref_targets = build_sep_targets(
+                    batch=batch,
+                    art_ctx=art_ctx,
+                    ref_ctx=ref_ctx,
+                    vqt_transform=self.transform,
+                    apply_effects=self.apply_effects,
+                    sample_rate=self.sample_rate,
+                    block_size=self.block_size,
+                    mean=self.lognorm_mean,
+                    std=self.lognorm_std,
+                    stems=self.stems,
+                )
+                art_targets = self._move_stem_batches(art_targets, device="cpu")
+                ref_targets = self._move_stem_batches(ref_targets, device="cpu")
+            else:
+                art_targets = {}
+                ref_targets = {}
 
-        art_out = self.model.forward_branch(art_ctx)
-        ref_out = self.model.forward_branch(ref_ctx)
+        art_out = self.model.forward_branch(art_ctx, compute_separation=self.compute_separation)
+        ref_out = self.model.forward_branch(ref_ctx, compute_separation=self.compute_separation)
         target_device = art_ctx.x_input.device
-        art_targets = self._move_stem_batches(art_targets, device=target_device)
-        ref_targets = self._move_stem_batches(ref_targets, device=target_device)
-
-        sep_output = self.sep_loss(
-            pred_by_stem=self._merge_stem_batches(art_out.stem_preds, ref_out.stem_preds),
-            target_by_stem=self._merge_stem_batches(art_targets, ref_targets),
-        )
+        if self.compute_separation:
+            art_targets = self._move_stem_batches(art_targets, device=target_device)
+            ref_targets = self._move_stem_batches(ref_targets, device=target_device)
+            sep_output = self.sep_loss(
+                pred_by_stem=self._merge_stem_batches(art_out.stem_preds, ref_out.stem_preds),
+                target_by_stem=self._merge_stem_batches(art_targets, ref_targets),
+            )
+        else:
+            sep_output = SeparationLossOutput(
+                loss=torch.zeros((), device=target_device),
+                per_stem_loss={},
+                per_stem_count={},
+            )
         sep_loss = sep_output.loss
         asid_output = self.asid_loss(art_out.stem_embeds, ref_out.stem_embeds, pos_masks)
         lambda_asid = self._lambda_asid()
@@ -297,6 +372,7 @@ class SepFPLightningModule(LightningModule):
         self.log(f"{stage}/loss_raw/asid", asid_output.loss, **log_kwargs)
         self.log(f"{stage}/lambda_sep", float(self.lambda_sep), **log_kwargs)
         self.log(f"{stage}/lambda_asid", float(lambda_asid), **log_kwargs)
+        self.log(f"{stage}/phase/compute_separation", float(self.compute_separation), **log_kwargs)
         if is_val:
             self._log_val_stem_metrics(stage=stage, sep_output=sep_output, asid_output=asid_output, device=objective_total.device)
         else:

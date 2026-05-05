@@ -1,0 +1,36 @@
+periodic_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  filename: "epoch{epoch:03d}-step{step}"
+  auto_insert_metric_name: false
+  save_top_k: -1
+  every_n_epochs: 10
+  save_last: false
+
+best_checkpoint:
+  _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  filename: "best-epoch{epoch:03d}-valasidobj{val/objective/asid_term:.4f}"
+  auto_insert_metric_name: false
+  monitor: val/objective/asid_term
+  mode: min
+  save_top_k: 1
+  save_last: true
+
+learning_rate_monitor:
+  _target_: lightning.pytorch.callbacks.LearningRateMonitor
+  logging_interval: step
+
+probe_eval:
+  _target_: sepfp.training.probe_callback.EvaluationProbeCallback
+  eval_repo: /home/maclab/user_woojinkang/SepFP_evaluation
+  config_path: /home/maclab/user_woojinkang/SepFP_evaluation/configs/checkpoint_probe_full.yaml
+  every_n_epochs: 10
+  metric_prefix: probe/full
+  inference_batch_size: 16
+  retry_batch_sizes: [8, 4, 2, 1]
+  scoring_device: cpu
+  output_dirname: probe_eval
+  empty_cache_before: true
+  empty_cache_after: true
+  fail_on_error: false
+  log_cuda_memory: true
+  use_trainer_precision_context: true

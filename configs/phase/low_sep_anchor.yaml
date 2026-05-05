@@ -1,0 +1,9 @@
+name: low_sep_anchor
+compute_separation: true
+lambda_sep: 1.0
+asid_gradient_route: evidence
+train_encoder: false
+train_evidence: true
+train_decoder: false
+train_projectors: true
+train_asid_temperature: null

@@ -17,10 +17,27 @@ from sepfp.models.sepfp_model import SepFPModel
 from sepfp.training.module import SepFPLightningModule
 
 
+def _art_time_jitter_frames(cfg: DictConfig) -> int | None:
+    crop_cfg = cfg.model.get("crop")
+    if crop_cfg is None or crop_cfg.get("art_time_jitter_seconds") is None:
+        return None
+    seconds = float(crop_cfg.art_time_jitter_seconds)
+    sample_rate = int(cfg.data.dataset.sample_rate)
+    hop_length = int(cfg.model.transform.hop_length)
+    return int(round(seconds * sample_rate / hop_length))
+
+
 @hydra.main(version_base="1.3", config_path="../configs", config_name="train")
 def main(cfg: DictConfig) -> None:
     if cfg.get("seed") is not None:
         L.seed_everything(cfg.seed, workers=True)
+
+    phase_cfg = cfg.get("phase", {})
+    phase_asid_route = phase_cfg.get("asid_gradient_route") if phase_cfg else None
+    asid_gradient_route = phase_asid_route or cfg.model.get("asid_gradient_route", "projector_only")
+    lambda_sep = cfg.loss.sep.lambda_
+    if phase_cfg and phase_cfg.get("lambda_sep") is not None:
+        lambda_sep = float(phase_cfg.lambda_sep)
 
     datamodule = hydra.utils.instantiate(cfg.data)
     effect_chain = RandomizedEffectChain(cfg.data.dataset.board)
@@ -35,8 +52,9 @@ def main(cfg: DictConfig) -> None:
         projector_out_dim=cfg.model.projector.out_dim,
         mask_mode=cfg.model.decoder.get("mask_mode", "active_softmax"),
         max_mask=cfg.model.decoder.get("max_mask", 2.0),
-        asid_gradient_route=cfg.model.get("asid_gradient_route", "projector_only"),
+        asid_gradient_route=asid_gradient_route,
     )
+    crop_cfg = cfg.model.get("crop", {})
     module = SepFPLightningModule(
         model=model,
         transform=hydra.utils.instantiate(cfg.model.transform),
@@ -54,10 +72,22 @@ def main(cfg: DictConfig) -> None:
         lognorm_mean=cfg.data.norm_stats[0],
         lognorm_std=cfg.data.norm_stats[1],
         stems=tuple(cfg.model.stems),
-        lambda_sep=cfg.loss.sep.lambda_,
+        art_time_crop_mode=crop_cfg.get("art_time_crop_mode", "random"),
+        art_max_time_jitter_frames=_art_time_jitter_frames(cfg),
+        art_share_time_jitter=bool(crop_cfg.get("art_share_time_jitter", False)),
+        ref_time_crop_mode=crop_cfg.get("ref_time_crop_mode", "random"),
+        ref_padding_mode=crop_cfg.get("ref_padding_mode", "random"),
+        lambda_sep=lambda_sep,
         lambda_asid_final=cfg.loss.asid.lambda_final,
         lambda_asid_warmup_epochs=cfg.loss.asid.warmup_epochs,
         apply_effects=effect_chain.apply_with_params,
+        phase_name=phase_cfg.get("name", "joint") if phase_cfg else "joint",
+        compute_separation=phase_cfg.get("compute_separation", True) if phase_cfg else True,
+        train_encoder=phase_cfg.get("train_encoder", True) if phase_cfg else True,
+        train_evidence=phase_cfg.get("train_evidence", True) if phase_cfg else True,
+        train_decoder=phase_cfg.get("train_decoder", True) if phase_cfg else True,
+        train_projectors=phase_cfg.get("train_projectors", True) if phase_cfg else True,
+        train_asid_temperature=phase_cfg.get("train_asid_temperature") if phase_cfg else None,
     )
 
     callbacks: list[Callback] = []

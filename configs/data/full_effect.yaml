@@ -7,6 +7,14 @@ dataset:
   sample_rate: 16000
   board:
     - effect:
+        _target_: pedalboard.PeakFilter
+      p: 0.2
+      cutoff_frequency_hz: "uniform 440 50 8000"
+      gain_db: "uniform 0 -20 10"
+      q: "random 1. 0. 1."
+      repeats: 8
+
+    - effect:
         _target_: pedalboard.Gain
       p: 0.2
       gain_db: "uniform 0 -10 10"
