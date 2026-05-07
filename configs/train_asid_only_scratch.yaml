@@ -1,0 +1,30 @@
+defaults:
+  - stem_set: six
+  - paths: default
+  - data: full_effect_asid_only
+  - model: sepfp_route_full
+  - loss: sepfp
+  - phase: asid_only_full
+  - checkpoint: none
+  - optimizer: asid_only_scratch
+  - scheduler: null
+  - trainer: full_asid_only_scratch
+  - callbacks: full_probe_asid_only_scratch
+  - logger: wandb_asid_only_scratch
+  - _self_
+
+task_name: train_asid_only_scratch
+seed: 0
+
+hydra:
+  run:
+    dir: ${paths.run_dir}
+
+loss:
+  asid:
+    warmup_epochs: 10
+
+data:
+  norm_stats: [-4.532, 1.023]
+  dataloader:
+    batch_size: 24

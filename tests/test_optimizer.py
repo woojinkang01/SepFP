@@ -83,6 +83,48 @@ def test_asid_only_optimizer_groups_exclude_frozen_encoder_and_decoder():
     assert not any(parameter.requires_grad for parameter in module.model.decoder.parameters())
 
 
+def test_asid_only_projector_scope_can_freeze_evidence_and_temperature():
+    module = SepFPLightningModule(
+        model=SepFPModel(asid_gradient_route="projector_only"),
+        compute_separation=False,
+        train_encoder=False,
+        train_evidence=False,
+        train_decoder=False,
+        train_projectors=True,
+        train_asid_temperature=False,
+    )
+    groups = build_sepfp_param_groups(module=module)
+    by_name = {group["name"]: group for group in groups}
+
+    assert set(by_name) == {"asid_projectors"}
+    assert _param_ids(module.model.projectors.parameters()) == _param_ids(by_name["asid_projectors"]["params"])
+    assert not any(parameter.requires_grad for parameter in module.model.encoder.parameters())
+    assert not any(parameter.requires_grad for parameter in module.model.evidence.parameters())
+    assert not any(parameter.requires_grad for parameter in module.model.decoder.parameters())
+    assert not module.asid_loss.log_temperature.requires_grad
+
+
+def test_asid_only_full_scope_can_train_encoder_without_decoder():
+    module = SepFPLightningModule(
+        model=SepFPModel(asid_gradient_route="full"),
+        compute_separation=False,
+        train_encoder=True,
+        train_evidence=True,
+        train_decoder=False,
+        train_projectors=True,
+        train_asid_temperature=True,
+    )
+    groups = build_sepfp_param_groups(module=module)
+    by_name = {group["name"]: group for group in groups}
+
+    assert set(by_name) == {"asid_encoder", "asid_evidence", "asid_projectors", "asid_temperature"}
+    assert _param_ids(module.model.encoder.parameters()) == _param_ids(by_name["asid_encoder"]["params"])
+    assert _param_ids(module.model.evidence.parameters()) == _param_ids(by_name["asid_evidence"]["params"])
+    assert _param_ids(module.model.projectors.parameters()) == _param_ids(by_name["asid_projectors"]["params"])
+    assert not any(parameter.requires_grad for parameter in module.model.decoder.parameters())
+    assert module.asid_loss.log_temperature.requires_grad
+
+
 def test_asid_only_phase_rejects_trainable_decoder():
     try:
         SepFPLightningModule(

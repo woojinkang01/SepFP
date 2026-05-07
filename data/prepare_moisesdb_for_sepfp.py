@@ -18,9 +18,11 @@ TARGET_SAMPLE_WIDTH = 2  # PCM s16le
 DEFAULT_THRESHOLD_DB = -20.0
 DEFAULT_ACTIVE_RATIO = 0.02
 DEFAULT_WORKERS = max(1, min(8, (os.cpu_count() or 1)))
+DEFAULT_OUTPUT_ROOT = Path("/home/maclab/user_woojinkang/SepFP/data/multistem")
+DEFAULT_DATASET_NAME = "moisesdb"
 
 
-RAW_TO_CANONICAL_STEM = {
+SIX_STEM_MAPPING = {
     "vocals": "vocals",
     "drums": "drums",
     "percussion": "drums",
@@ -32,6 +34,35 @@ RAW_TO_CANONICAL_STEM = {
     "bowed_strings": "others",
     "wind": "others",
     "other_plucked": "others",
+}
+
+FOUR_STEM_MAPPING = {
+    "vocals": "vocals",
+    "drums": "drums",
+    "percussion": "drums",
+    "bass": "bass",
+    "guitar": "others",
+    "piano": "others",
+    "other": "others",
+    "other_keys": "others",
+    "bowed_strings": "others",
+    "wind": "others",
+    "other_plucked": "others",
+}
+
+STEM_MODE_TO_MAPPING = {
+    "six": SIX_STEM_MAPPING,
+    "four": FOUR_STEM_MAPPING,
+}
+
+STEM_MODE_TO_ALLOWED_STEMS = {
+    "six": frozenset(("vocals", "drums", "bass", "guitar", "piano", "others")),
+    "four": frozenset(("vocals", "drums", "bass", "others")),
+}
+
+STEM_MODE_TO_OUTPUT_DIR = {
+    "six": "6stem",
+    "four": "4stem",
 }
 
 
@@ -59,14 +90,32 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--audio-root",
         type=Path,
-        default=Path("/home/maclab/user_woojinkang/SepFP/data/moisesdb_16k_mono_cropped"),
-        help="Output root for converted 16kHz mono audio cropped to the shortest track per song.",
+        default=None,
+        help="Output root for converted 16kHz mono audio cropped to the shortest track per song. Overrides --output-root layout.",
     )
     parser.add_argument(
         "--meta-root",
         type=Path,
-        default=Path("/home/maclab/user_woojinkang/SepFP/data/moisesdb_meta_cropped"),
-        help="Output root for .txt and .npy metadata built from cropped audio.",
+        default=None,
+        help="Output root for .txt and .npy metadata built from cropped audio. Overrides --output-root layout.",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=DEFAULT_OUTPUT_ROOT,
+        help="Root for the multistem/<stem-mode>stem/<dataset-name>/ output layout.",
+    )
+    parser.add_argument(
+        "--dataset-name",
+        type=str,
+        default=DEFAULT_DATASET_NAME,
+        help="Dataset name used under the multistem output layout.",
+    )
+    parser.add_argument(
+        "--stem-mode",
+        choices=sorted(STEM_MODE_TO_MAPPING),
+        default="six",
+        help="Canonical stem layout to prepare.",
     )
     parser.add_argument(
         "--limit-songs",
@@ -93,7 +142,23 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_song_spec(song_dir: Path) -> SongSpec | None:
+def resolve_output_roots(args: argparse.Namespace) -> tuple[Path, Path]:
+    stem_dir = STEM_MODE_TO_OUTPUT_DIR[args.stem_mode]
+    dataset_root = args.output_root / stem_dir / args.dataset_name
+    audio_root = args.audio_root or (dataset_root / "audio_16k_mono_cropped")
+    meta_root = args.meta_root or (dataset_root / "meta_cropped")
+    return audio_root, meta_root
+
+
+def _validate_output_roots_for_mode(audio_root: Path, meta_root: Path, stem_mode: str) -> None:
+    roots = (audio_root.resolve(), meta_root.resolve())
+    if stem_mode == "four" and any("6stem" in root.parts for root in roots):
+        raise ValueError(f"four-stem preprocessing must not write under a 6stem path: {roots}")
+    if stem_mode == "six" and any("4stem" in root.parts for root in roots):
+        raise ValueError(f"six-stem preprocessing must not write under a 4stem path: {roots}")
+
+
+def _load_song_spec(song_dir: Path, stem_mapping: dict[str, str]) -> SongSpec | None:
     data_path = song_dir / "data.json"
     if not data_path.exists():
         return None
@@ -104,7 +169,7 @@ def _load_song_spec(song_dir: Path) -> SongSpec | None:
 
     for stem in payload.get("stems", []):
         raw_stem = stem.get("stemName")
-        canonical = RAW_TO_CANONICAL_STEM.get(raw_stem)
+        canonical = stem_mapping.get(raw_stem)
         if canonical is None:
             continue
         for track in stem.get("tracks", []):
@@ -126,13 +191,25 @@ def _load_song_spec(song_dir: Path) -> SongSpec | None:
         return None
 
     tracks.sort(key=lambda item: (item.canonical_stem, item.processed_relpath.name))
+    relpaths = [track.processed_relpath for track in tracks]
+    if len(relpaths) != len(set(relpaths)):
+        duplicates = sorted(str(path) for path in set(relpaths) if relpaths.count(path) > 1)
+        raise ValueError(f"{song_id}: duplicate processed output paths after stem mapping: {duplicates[:3]}")
     return SongSpec(song_id=song_id, tracks=tuple(tracks))
 
 
 def discover_songs(raw_root: Path, limit_songs: int | None = None) -> list[SongSpec]:
+    return discover_songs_with_mapping(raw_root, STEM_MODE_TO_MAPPING["six"], limit_songs=limit_songs)
+
+
+def discover_songs_with_mapping(
+    raw_root: Path,
+    stem_mapping: dict[str, str],
+    limit_songs: int | None = None,
+) -> list[SongSpec]:
     song_specs = []
     for song_dir in sorted(path for path in raw_root.iterdir() if path.is_dir()):
-        spec = _load_song_spec(song_dir)
+        spec = _load_song_spec(song_dir, stem_mapping=stem_mapping)
         if spec is not None:
             song_specs.append(spec)
     if limit_songs is not None:
@@ -278,7 +355,14 @@ def compute_activation_matrix(wav_paths: Iterable[Path], threshold_db: float = D
     return matrix
 
 
-def process_song(spec: SongSpec, audio_root: Path, meta_root: Path, overwrite: bool = False, validate_only: bool = False) -> dict[str, object]:
+def process_song(
+    spec: SongSpec,
+    audio_root: Path,
+    meta_root: Path,
+    overwrite: bool = False,
+    validate_only: bool = False,
+    allowed_stems: frozenset[str] | None = None,
+) -> dict[str, object]:
     processed_paths = [audio_root / track.processed_relpath for track in spec.tracks]
     converted_lengths = [get_converted_frame_count(track.raw_path) for track in spec.tracks]
     target_num_frames = min(converted_lengths)
@@ -303,7 +387,13 @@ def process_song(spec: SongSpec, audio_root: Path, meta_root: Path, overwrite: b
 
     txt_path = meta_root / f"{spec.song_id}.txt"
     npy_path = meta_root / f"{spec.song_id}.npy"
-    validate_song_outputs(spec, audio_root=audio_root, txt_path=txt_path, npy_path=npy_path)
+    validate_song_outputs(
+        spec,
+        audio_root=audio_root,
+        txt_path=txt_path,
+        npy_path=npy_path,
+        allowed_stems=allowed_stems,
+    )
 
     return {
         "song_id": spec.song_id,
@@ -314,7 +404,13 @@ def process_song(spec: SongSpec, audio_root: Path, meta_root: Path, overwrite: b
     }
 
 
-def validate_song_outputs(spec: SongSpec, audio_root: Path, txt_path: Path, npy_path: Path) -> None:
+def validate_song_outputs(
+    spec: SongSpec,
+    audio_root: Path,
+    txt_path: Path,
+    npy_path: Path,
+    allowed_stems: frozenset[str] | None = None,
+) -> None:
     if not txt_path.exists():
         raise FileNotFoundError(f"Missing txt metadata: {txt_path}")
     if not npy_path.exists():
@@ -333,6 +429,12 @@ def validate_song_outputs(spec: SongSpec, audio_root: Path, txt_path: Path, npy_
         raise ValueError(f"{spec.song_id}: txt ordering does not match song spec ordering")
 
     for rel_path in rel_paths:
+        rel_parts = Path(rel_path).parts
+        if len(rel_parts) < 3:
+            raise ValueError(f"{spec.song_id}: expected <song>/<stem>/<track>.wav relpath, got {rel_path}")
+        canonical_stem = rel_parts[1]
+        if allowed_stems is not None and canonical_stem not in allowed_stems:
+            raise ValueError(f"{spec.song_id}: stem {canonical_stem!r} is not allowed for this stem mode")
         wav_path = audio_root / rel_path
         if not wav_path.exists():
             raise FileNotFoundError(f"Missing converted wav: {wav_path}")
@@ -367,11 +469,12 @@ def run_parallel(
     workers: int,
     overwrite: bool,
     validate_only: bool,
+    allowed_stems: frozenset[str] | None = None,
 ) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
     with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {
-            executor.submit(process_song, spec, audio_root, meta_root, overwrite, validate_only): spec.song_id
+            executor.submit(process_song, spec, audio_root, meta_root, overwrite, validate_only, allowed_stems): spec.song_id
             for spec in song_specs
         }
         for future in as_completed(futures):
@@ -400,10 +503,14 @@ def summarize_outputs(results: list[dict[str, object]]) -> str:
 def main() -> None:
     args = parse_args()
     raw_root = args.raw_root.resolve()
-    audio_root = args.audio_root.resolve()
-    meta_root = args.meta_root.resolve()
+    audio_root, meta_root = resolve_output_roots(args)
+    audio_root = audio_root.resolve()
+    meta_root = meta_root.resolve()
+    _validate_output_roots_for_mode(audio_root=audio_root, meta_root=meta_root, stem_mode=args.stem_mode)
 
-    song_specs = discover_songs(raw_root, limit_songs=args.limit_songs)
+    stem_mapping = STEM_MODE_TO_MAPPING[args.stem_mode]
+    allowed_stems = STEM_MODE_TO_ALLOWED_STEMS[args.stem_mode]
+    song_specs = discover_songs_with_mapping(raw_root, stem_mapping=stem_mapping, limit_songs=args.limit_songs)
     if not song_specs:
         raise SystemExit("No songs discovered. Check raw_root and data.json structure.")
 
@@ -414,6 +521,7 @@ def main() -> None:
         workers=max(1, args.workers),
         overwrite=args.overwrite,
         validate_only=args.validate_only,
+        allowed_stems=allowed_stems,
     )
     print(summarize_outputs(results))
 

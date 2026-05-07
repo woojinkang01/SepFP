@@ -1,6 +1,6 @@
 csv:
   _target_: lightning.pytorch.loggers.CSVLogger
-  save_dir: logs
-  name: sepfp
+  save_dir: ${paths.csv_dir}
+  name: metrics
   version: null
   prefix: ""

@@ -1,12 +1,12 @@
 wandb:
   _target_: lightning.pytorch.loggers.wandb.WandbLogger
   project: sepfp
-  name: sepfp-0502-asid-gradient-evidence
+  name: sepfp-4stem-scratch-musdb18hq-moisesdb-val
   save_dir: ${paths.wandb_dir}
   offline: false
   log_model: false
   save_code: true
-  group: source-query-linear-mask
-  tags: [full, moisesdb, train208-val32, linear-mag-mask, separate-projector, gradient-evidence]
+  group: 4stem-from-scratch
+  tags: [full, 4stem, musdb18hq-train150, moisesdb-val32, linear-mag-mask, source-query]
   job_type: train
   prefix: ""

@@ -1,4 +1,5 @@
 model_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${paths.checkpoint_dir}
   save_top_k: 0
   save_last: true

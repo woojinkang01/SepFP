@@ -1,12 +1,20 @@
 _target_: sepfp.data.datamodule.SepFPDataModule
 
 dataset:
-  data_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/audio_16k_mono_cropped
-  meta_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/meta_train208_seed0
+  data_path: /home/maclab/user_woojinkang/SepFP/data/multistem/4stem/moisesdb/audio_16k_mono_cropped
+  meta_path: /home/maclab/user_woojinkang/SepFP/data/multistem/4stem/moisesdb/meta_train208_seed0
   stems: ${stem_set.stems}
   duration: 7.2
   sample_rate: 16000
   board:
+    - effect:
+        _target_: pedalboard.PeakFilter
+      p: 0.2
+      cutoff_frequency_hz: "uniform 440 50 8000"
+      gain_db: "uniform 0 -20 10"
+      q: "random 1. 0. 1."
+      repeats: 8
+
     - effect:
         _target_: pedalboard.Gain
       p: 0.2
@@ -17,8 +25,8 @@ dataset:
   num_trials: 10
 
 validation_dataset:
-  data_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/audio_16k_mono_cropped
-  meta_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/meta_val32_seed0
+  data_path: /home/maclab/user_woojinkang/SepFP/data/multistem/4stem/moisesdb/audio_16k_mono_cropped
+  meta_path: /home/maclab/user_woojinkang/SepFP/data/multistem/4stem/moisesdb/meta_val32_seed0
   stems: ${stem_set.stems}
   duration: 7.2
   sample_rate: 16000

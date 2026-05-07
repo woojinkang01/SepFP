@@ -4,13 +4,13 @@ periodic_checkpoint:
   filename: "epoch{epoch:03d}-step{step}"
   auto_insert_metric_name: false
   save_top_k: -1
-  every_n_epochs: 10
+  every_n_epochs: 5
   save_last: false
 
 best_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
   dirpath: ${paths.checkpoint_dir}
-  filename: "best-epoch{epoch:03d}-valasidobj{val/objective/asid_term:.4f}"
+  filename: "best-asidonly-epoch{epoch:03d}-valasidobj{val/objective/asid_term:.4f}"
   auto_insert_metric_name: false
   monitor: val/objective/asid_term
   mode: min
@@ -25,7 +25,7 @@ probe_eval:
   _target_: sepfp.training.probe_callback.EvaluationProbeCallback
   eval_repo: /home/maclab/user_woojinkang/SepFP_evaluation
   config_path: /home/maclab/user_woojinkang/SepFP_evaluation/configs/checkpoint_probe_full.yaml
-  every_n_epochs: 10
+  every_n_epochs: 5
   metric_prefix: probe/full
   inference_batch_size: 16
   retry_batch_sizes: [8, 4, 2, 1]

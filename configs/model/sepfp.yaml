@@ -1,4 +1,4 @@
-stems: [vocals, drums, bass, guitar, piano, others]
+stems: ${stem_set.stems}
 asid_gradient_route: projector_only
 transform:
   _target_: sepfp.data.vqt.VQT

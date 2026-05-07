@@ -25,7 +25,7 @@ def _apply_effect_to_sources(
         raise RuntimeError("Effect parameters are present but no effect applier was provided")
     outputs = []
     for source in sources:
-        effected = apply_effects(source.audio.to(device=device), sample_rate, effect_params)
+        effected = apply_effects(source.audio, sample_rate, effect_params)
         outputs.append(effected.to(device=device))
     return outputs
 

@@ -1,4 +1,5 @@
 _target_: lightning.Trainer
+default_root_dir: ${paths.run_dir}
 max_epochs: 10
 accelerator: auto
 devices: 1

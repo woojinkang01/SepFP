@@ -1,0 +1,28 @@
+defaults:
+  - stem_set: six
+  - paths: default
+  - data: full_effect_asid_only
+  - model: sepfp_route_full
+  - loss: sepfp
+  - phase: asid_only_full
+  - checkpoint: resume_weights_only
+  - optimizer: asid_only_full
+  - scheduler: null
+  - trainer: full_asid_only_full
+  - callbacks: full_probe_asid_only_full
+  - logger: wandb_asid_only_full
+  - _self_
+
+task_name: train_asid_only_full
+seed: 0
+
+hydra:
+  run:
+    dir: ${paths.run_dir}
+
+checkpoint:
+  path: /home/maclab/user_woojinkang/SepFP/sepfp/clo81l4k/checkpoints/epoch109-step3850.ckpt
+
+data:
+  dataloader:
+    batch_size: 24

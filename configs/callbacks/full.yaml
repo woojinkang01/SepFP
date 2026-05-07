@@ -1,5 +1,6 @@
 periodic_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${paths.checkpoint_dir}
   filename: "epoch{epoch:03d}-step{step}"
   auto_insert_metric_name: false
   save_top_k: -1
@@ -8,6 +9,7 @@ periodic_checkpoint:
 
 best_checkpoint:
   _target_: lightning.pytorch.callbacks.ModelCheckpoint
+  dirpath: ${paths.checkpoint_dir}
   filename: "best-epoch{epoch:03d}-valasidobj{val/objective/asid_term:.4f}"
   auto_insert_metric_name: false
   monitor: val/objective/asid_term

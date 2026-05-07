@@ -1,6 +1,6 @@
 _target_: lightning.Trainer
 default_root_dir: ${paths.run_dir}
-max_epochs: 500
+max_epochs: 300
 max_steps: -1
 accelerator: gpu
 devices: 2

@@ -1,8 +1,9 @@
 _target_: sepfp.data.datamodule.SepFPDataModule
 
 dataset:
-  data_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_16k_mono_cropped
-  meta_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_meta_train208_seed0
+  data_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/audio_16k_mono_cropped
+  meta_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/meta_train208_seed0
+  stems: ${stem_set.stems}
   duration: 7.2
   sample_rate: 16000
   board:
@@ -16,8 +17,9 @@ dataset:
   num_trials: 10
 
 validation_dataset:
-  data_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_16k_mono_cropped
-  meta_path: /home/maclab/user_woojinkang/SepFP/data/moisesdb_meta_val32_seed0
+  data_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/audio_16k_mono_cropped
+  meta_path: /home/maclab/user_woojinkang/SepFP/data/multistem/6stem/moisesdb/meta_val32_seed0
+  stems: ${stem_set.stems}
   duration: 7.2
   sample_rate: 16000
   board: []
@@ -26,7 +28,7 @@ validation_dataset:
   subset: 1.0
   num_trials: 10
 
-norm_stats: [0.0, 1.0]
+norm_stats: [-4.532, 1.023]
 
 dataloader:
   batch_size: 8

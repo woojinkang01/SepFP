@@ -1,9 +1,9 @@
 import pytest
 import torch
 
-from sepfp.data.batch_types import BranchEffectParams, BranchContext, SepFPTrainBatch, StemSource
+from sepfp.data.batch_types import BranchEffectParams, BranchContext, EffectOp, SepFPTrainBatch, StemSource
 from sepfp.data.preprocess import build_ref_branch, complex_to_linear_mag
-from sepfp.data.targets import build_sep_targets
+from sepfp.data.targets import _apply_effect_to_sources, build_sep_targets
 
 
 class DummyComplexTransform(torch.nn.Module):
@@ -221,3 +221,31 @@ def test_sep_targets_move_nested_stem_audio_to_batch_device():
 
     assert art_targets["bass"].tensor.device.type == device.type
     assert ref_targets["bass"].tensor.device.type == device.type
+
+
+def test_effect_target_replay_keeps_source_on_cpu_until_after_pedalboard():
+    target_device = torch.device("meta")
+    seen_devices = []
+    seen_dims = []
+
+    def apply_effects(audio: torch.Tensor, sample_rate: int, params: BranchEffectParams) -> torch.Tensor:
+        _ = sample_rate, params
+        seen_devices.append(audio.device.type)
+        seen_dims.append(audio.ndim)
+        return audio.mean(dim=0) if audio.ndim > 1 else audio
+
+    stereo_source = StemSource(audio=torch.ones(2, 16), provenance_id="song0_bass")
+    effect_params = BranchEffectParams((EffectOp(name="FakeEffect", params={}),))
+
+    outputs = _apply_effect_to_sources(
+        sources=(stereo_source,),
+        sample_rate=16000,
+        effect_params=effect_params,
+        apply_effects=apply_effects,
+        device=target_device,
+    )
+
+    assert seen_devices == ["cpu"]
+    assert seen_dims == [2]
+    assert len(outputs) == 1
+    assert outputs[0].device.type == target_device.type

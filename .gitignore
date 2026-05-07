@@ -21,6 +21,7 @@ venv/
 /wandb/
 /logs/
 /outputs/
+/runs/
 /checkpoints/
 /probe_eval/
 *.ckpt

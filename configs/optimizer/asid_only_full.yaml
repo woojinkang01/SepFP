@@ -1,0 +1,6 @@
+_target_: sepfp.training.optim.build_sepfp_optimizer
+_partial_: true
+lr_sep: 1e-6
+lr_asid: 3e-5
+lr_asid_temperature: 1e-5
+weight_decay: 0.01

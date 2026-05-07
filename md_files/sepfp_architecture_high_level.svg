@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">SepFP High-Level Architecture</title>
+  <desc id="desc">Left-to-right high-level architecture diagram for SepFP with tensor dimensions.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#263238"/>
+    </marker>
+    <marker id="arrowBlue" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#15803d"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#263238" flood-opacity="0.12"/>
+    </filter>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font: 700 42px Arial, Helvetica, sans-serif; fill: #111827; }
+      .subtitle { font: 400 22px Arial, Helvetica, sans-serif; fill: #475569; }
+      .label { font: 700 22px Arial, Helvetica, sans-serif; fill: #111827; }
+      .small { font: 400 18px Arial, Helvetica, sans-serif; fill: #334155; }
+      .tiny { font: 400 15px Arial, Helvetica, sans-serif; fill: #475569; }
+      .dim { font: 700 18px Arial, Helvetica, sans-serif; fill: #0f172a; }
+      .lane { fill: #ffffff; stroke: #cbd5e1; stroke-width: 2; rx: 8; filter: url(#shadow); }
+      .module { fill: #ffffff; stroke: #334155; stroke-width: 2.5; rx: 8; filter: url(#shadow); }
+      .input { fill: #e0f2fe; stroke: #0284c7; }
+      .encoder { fill: #dbeafe; stroke: #2563eb; }
+      .evidence { fill: #fef3c7; stroke: #d97706; }
+      .sep { fill: #dcfce7; stroke: #16a34a; }
+      .asid { fill: #fce7f3; stroke: #db2777; }
+      .carrier { fill: #ede9fe; stroke: #7c3aed; }
+      .loss { fill: #f1f5f9; stroke: #475569; }
+      .arrow { fill: none; stroke: #263238; stroke-width: 3; marker-end: url(#arrow); }
+      .arrowBlue { fill: none; stroke: #2563eb; stroke-width: 3.5; marker-end: url(#arrowBlue); }
+      .arrowGreen { fill: none; stroke: #15803d; stroke-width: 3.5; marker-end: url(#arrowGreen); }
+      .bypass { fill: none; stroke: #7c3aed; stroke-width: 3; stroke-dasharray: 10 8; marker-end: url(#arrow); }
+      .thin { fill: none; stroke: #64748b; stroke-width: 2.2; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect class="bg" width="1920" height="1080"/>
+  <text class="title" x="80" y="78">SepFP Architecture - High Level</text>
+  <text class="subtitle" x="80" y="114">Default active stack: source-query evidence + independent capped linear-magnitude masks</text>
+
+  <g transform="translate(1230,48)">
+    <rect x="0" y="0" width="42" height="18" fill="#dbeafe" stroke="#2563eb"/>
+    <text class="tiny" x="54" y="15">Encoder / shared memory</text>
+    <rect x="260" y="0" width="42" height="18" fill="#fef3c7" stroke="#d97706"/>
+    <text class="tiny" x="314" y="15">Stem evidence</text>
+    <rect x="0" y="34" width="42" height="18" fill="#dcfce7" stroke="#16a34a"/>
+    <text class="tiny" x="54" y="49">Separation path</text>
+    <rect x="260" y="34" width="42" height="18" fill="#fce7f3" stroke="#db2777"/>
+    <text class="tiny" x="314" y="49">ASID path</text>
+  </g>
+
+  <g id="audio" transform="translate(70,235)">
+    <rect class="module input" x="0" y="0" width="220" height="185"/>
+    <text class="label" x="24" y="42">Audio batch</text>
+    <text class="small" x="24" y="76">mix_A / mix_B / mix_AB</text>
+    <text class="dim" x="24" y="112">[B, 115200]</text>
+    <text class="tiny" x="24" y="140">7.2 s @ 16 kHz</text>
+    <path d="M28,166 C55,130 82,202 112,166 S168,130 194,166" fill="none" stroke="#0284c7" stroke-width="5"/>
+  </g>
+
+  <g id="vqt" transform="translate(350,230)">
+    <polygon points="20,30 190,30 222,62 52,62" fill="#bae6fd" stroke="#0284c7" stroke-width="2.5"/>
+    <polygon points="52,62 222,62 222,180 52,180" fill="#e0f2fe" stroke="#0284c7" stroke-width="2.5"/>
+    <polygon points="20,30 52,62 52,180 20,148" fill="#7dd3fc" stroke="#0284c7" stroke-width="2.5"/>
+    <text class="label" x="70" y="86">VQT</text>
+    <text class="small" x="70" y="120">Complex</text>
+    <text class="dim" x="70" y="154">[B, 288, T, 2]</text>
+    <text class="tiny" x="70" y="180">hop=320, n_bins=288</text>
+  </g>
+
+  <g id="branch" transform="translate(650,190)">
+    <rect class="module input" x="0" y="0" width="270" height="265"/>
+    <text class="label" x="24" y="42">Branch builder</text>
+    <rect x="24" y="70" width="222" height="58" rx="6" fill="#f0f9ff" stroke="#0284c7" stroke-width="2"/>
+    <text class="small" x="40" y="105">ART: A + rolled B</text>
+    <rect x="24" y="144" width="222" height="58" rx="6" fill="#f0f9ff" stroke="#0284c7" stroke-width="2"/>
+    <text class="small" x="40" y="179">REF: AB stretch/crop</text>
+    <text class="dim" x="24" y="234">block [252, 256]</text>
+  </g>
+
+  <g id="context" transform="translate(1010,150)">
+    <rect class="module input" x="0" y="0" width="310" height="340"/>
+    <text class="label" x="26" y="42">BranchContext</text>
+    <text class="small" x="26" y="80">x_input: lognorm magnitude</text>
+    <text class="dim" x="26" y="108">[B, 1, 252, 256]</text>
+    <line x1="26" y1="132" x2="284" y2="132" stroke="#94a3b8"/>
+    <text class="small" x="26" y="168">x_linear_mag: carrier</text>
+    <text class="dim" x="26" y="196">[B, 1, 252, 256]</text>
+    <line x1="26" y1="220" x2="284" y2="220" stroke="#94a3b8"/>
+    <text class="small" x="26" y="256">active_mask</text>
+    <text class="dim" x="26" y="284">[B, 6 stems]</text>
+    <g transform="translate(196,238)">
+      <rect x="0" y="0" width="18" height="18" fill="#0284c7"/>
+      <rect x="24" y="0" width="18" height="18" fill="#0284c7"/>
+      <rect x="48" y="0" width="18" height="18" fill="#e2e8f0"/>
+      <rect x="0" y="24" width="18" height="18" fill="#e2e8f0"/>
+      <rect x="24" y="24" width="18" height="18" fill="#0284c7"/>
+      <rect x="48" y="24" width="18" height="18" fill="#0284c7"/>
+    </g>
+  </g>
+
+  <g id="encoder" transform="translate(1420,198)">
+    <rect class="module encoder" x="0" y="0" width="285" height="178"/>
+    <text class="label" x="24" y="42">TFEvidenceEncoder</text>
+    <text class="small" x="24" y="80">2 stride-2 stages</text>
+    <text class="dim" x="24" y="118">[B,1,252,256]</text>
+    <text class="dim" x="24" y="148">to [B,256,63,64]</text>
+  </g>
+
+  <g id="evidence" transform="translate(520,585)">
+    <rect class="module evidence" x="0" y="0" width="360" height="205"/>
+    <text class="label" x="24" y="42">SourceQueryEvidenceExtractor</text>
+    <text class="small" x="24" y="80">per active stem query</text>
+    <text class="small" x="24" y="112">s in vocals, drums, bass,</text>
+    <text class="small" x="24" y="140">guitar, piano, others</text>
+    <text class="dim" x="24" y="176">u_s: [N_s,192,63,64]</text>
+  </g>
+
+  <g id="sepPath" transform="translate(1010,560)">
+    <rect class="lane" x="0" y="0" width="790" height="210"/>
+    <text class="label" x="28" y="42">Separation head</text>
+    <g transform="translate(30,72)">
+      <rect class="module sep" x="0" y="0" width="220" height="94"/>
+      <text class="small" x="22" y="36">LinearMagMaskDecoder</text>
+      <text class="dim" x="22" y="66">mask_s [N_s,1,252,256]</text>
+    </g>
+    <g transform="translate(300,72)">
+      <circle cx="50" cy="47" r="40" fill="#ecfdf5" stroke="#16a34a" stroke-width="3"/>
+      <text class="label" x="35" y="55">*</text>
+      <text class="tiny" x="10" y="112">multiply by carrier</text>
+    </g>
+    <g transform="translate(450,72)">
+      <rect class="module sep" x="0" y="0" width="190" height="94"/>
+      <text class="small" x="22" y="36">predicted stem</text>
+      <text class="dim" x="22" y="66">[N_s,1,252,256]</text>
+    </g>
+    <g transform="translate(665,72)">
+      <rect class="module loss" x="0" y="0" width="100" height="94"/>
+      <text class="small" x="18" y="38">Sep</text>
+      <text class="small" x="18" y="64">loss</text>
+    </g>
+  </g>
+
+  <g id="asidPath" transform="translate(1010,815)">
+    <rect class="lane" x="0" y="0" width="790" height="150"/>
+    <text class="label" x="28" y="42">ASID embedding head</text>
+    <g transform="translate(30,65)">
+      <rect class="module asid" x="0" y="0" width="230" height="62"/>
+      <text class="small" x="18" y="38">EvidenceProjector per stem</text>
+    </g>
+    <g transform="translate(330,65)">
+      <rect class="module asid" x="0" y="0" width="170" height="62"/>
+      <text class="dim" x="24" y="39">z_s [N_s,512]</text>
+    </g>
+    <g transform="translate(580,65)">
+      <rect class="module loss" x="0" y="0" width="170" height="62"/>
+      <text class="small" x="30" y="38">InfoNCE loss</text>
+    </g>
+  </g>
+
+  <path class="arrow" d="M292,328 L360,328"/>
+  <path class="arrow" d="M572,328 L650,328"/>
+  <path class="arrow" d="M920,320 L1010,320"/>
+  <path class="arrowBlue" d="M1320,318 L1420,288"/>
+  <path class="arrowBlue" d="M1560,376 C1560,505 1120,505 880,640"/>
+  <path class="arrowGreen" d="M880,670 L1040,632"/>
+  <path class="arrowGreen" d="M1260,678 L1305,678"/>
+  <path class="arrowGreen" d="M1410,678 L1460,678"/>
+  <path class="arrowGreen" d="M1650,678 L1675,678"/>
+  <path class="arrow" d="M880,725 C940,790 980,870 1040,895"/>
+  <path class="arrow" d="M1270,896 L1340,896"/>
+  <path class="arrow" d="M1510,896 L1590,896"/>
+  <path class="bypass" d="M1165,490 C1165,535 1225,595 1305,642"/>
+
+  <text class="tiny" x="92" y="1010">Notation: B=batch size, N_s=number of active samples for stem s. Only active stems create evidence, masks, and embeddings.</text>
+  <text class="tiny" x="92" y="1038">Separation uses linear magnitude carrier/target; encoder input uses log-normalized VQT magnitude.</text>
+</svg>

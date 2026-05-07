@@ -1,7 +1,7 @@
 defaults:
-  - stem_set: six
+  - stem_set: four
   - paths: default
-  - data: full_effect
+  - data: musdb18hq_4stem_train_moisesdb_val
   - model: sepfp_route_evidence
   - loss: sepfp
   - phase: joint
@@ -9,11 +9,11 @@ defaults:
   - optimizer: default
   - scheduler: null
   - trainer: full_route_evidence
-  - callbacks: full_probe
-  - logger: wandb
+  - callbacks: full
+  - logger: wandb_4stem_scratch
   - _self_
 
-task_name: train_sepfp
+task_name: train_4stem_scratch
 seed: 0
 
 hydra:

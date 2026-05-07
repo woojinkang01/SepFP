@@ -8,9 +8,25 @@ dataset:
   sample_rate: 16000
   board:
     - effect:
-        _target_: pedalboard.Gain
+        _target_: pedalboard.PeakFilter
       p: 0.2
+      cutoff_frequency_hz: "uniform 440 50 8000"
+      gain_db: "uniform 0 -20 10"
+      q: "random 1. 0. 1."
+      repeats: 8
+
+    - effect:
+        _target_: pedalboard.Gain
+      p: 0.35
       gain_db: "uniform 0 -10 10"
+
+    - effect:
+        _target_: pedalboard.Compressor
+      p: 0.2
+      threshold_db: "uniform 0 -30 0"
+      ratio: "choice 1 2 4 8 20"
+      attack_ms: "uniform 0 1 100"
+      release_ms: "uniform 0 50 1000"
   duplicate_dataset: 8
   threshold: 0.5
   subset: 1.0
@@ -31,7 +47,7 @@ validation_dataset:
 norm_stats: [-4.532, 1.023]
 
 dataloader:
-  batch_size: 12
+  batch_size: 64
   num_workers: 3
   pin_memory: true
   persistent_workers: true

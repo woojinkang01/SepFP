@@ -1,9 +1,9 @@
-name: asid_only
+name: asid_only_projector
 compute_separation: false
 lambda_sep: 0.0
-asid_gradient_route: evidence
+asid_gradient_route: projector_only
 train_encoder: false
-train_evidence: true
+train_evidence: false
 train_decoder: false
 train_projectors: true
 train_asid_temperature: true

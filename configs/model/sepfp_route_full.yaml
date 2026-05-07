@@ -1,5 +1,5 @@
 stems: ${stem_set.stems}
-asid_gradient_route: evidence
+asid_gradient_route: full
 transform:
   _target_: sepfp.data.vqt.VQT
   sr: ${data.dataset.sample_rate}

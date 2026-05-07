@@ -14,6 +14,7 @@ from sepfp.data.effects import RandomizedEffectChain
 from sepfp.losses.multi_positive_infonce import MultiPositiveInfoNCELoss
 from sepfp.losses.separation import SeparationLoss
 from sepfp.models.sepfp_model import SepFPModel
+from sepfp.training.checkpointing import resolve_checkpoint_loading
 from sepfp.training.module import SepFPLightningModule
 
 
@@ -27,10 +28,44 @@ def _art_time_jitter_frames(cfg: DictConfig) -> int | None:
     return int(round(seconds * sample_rate / hop_length))
 
 
+def _stems_tuple(value) -> tuple[str, ...]:
+    return tuple(str(stem) for stem in value)
+
+
+def _validate_stem_contract(cfg: DictConfig) -> None:
+    model_stems = _stems_tuple(cfg.model.stems)
+    if not model_stems:
+        raise ValueError("model.stems must contain at least one stem.")
+    if len(model_stems) != len(set(model_stems)):
+        raise ValueError(f"model.stems contains duplicate entries: {model_stems}")
+
+    dataset_cfg = cfg.data.dataset
+    if dataset_cfg.get("stems") is None:
+        raise ValueError("cfg.data.dataset.stems must be set and match cfg.model.stems.")
+    dataset_stems = _stems_tuple(dataset_cfg.stems)
+    if dataset_stems != model_stems:
+        raise ValueError(
+            "Stem contract mismatch: cfg.model.stems must match cfg.data.dataset.stems. "
+            f"model={model_stems}, dataset={dataset_stems}"
+        )
+
+    validation_cfg = cfg.data.get("validation_dataset")
+    if validation_cfg is not None:
+        if validation_cfg.get("stems") is None:
+            raise ValueError("cfg.data.validation_dataset.stems must be set and match cfg.model.stems.")
+        validation_stems = _stems_tuple(validation_cfg.stems)
+        if validation_stems != model_stems:
+            raise ValueError(
+                "Stem contract mismatch: cfg.model.stems must match cfg.data.validation_dataset.stems. "
+                f"model={model_stems}, validation_dataset={validation_stems}"
+            )
+
+
 @hydra.main(version_base="1.3", config_path="../configs", config_name="train")
 def main(cfg: DictConfig) -> None:
     if cfg.get("seed") is not None:
         L.seed_everything(cfg.seed, workers=True)
+    _validate_stem_contract(cfg)
 
     phase_cfg = cfg.get("phase", {})
     phase_asid_route = phase_cfg.get("asid_gradient_route") if phase_cfg else None
@@ -102,8 +137,12 @@ def main(cfg: DictConfig) -> None:
             if logger_cfg and "_target_" in logger_cfg:
                 logger.append(hydra.utils.instantiate(logger_cfg))
 
+    ckpt_path, checkpoint_report = resolve_checkpoint_loading(cfg.checkpoint, module)
+    if checkpoint_report is not None:
+        print(f"[SepFP checkpoint] {checkpoint_report}")
+
     trainer = hydra.utils.instantiate(cfg.trainer, callbacks=callbacks, logger=logger)
-    trainer.fit(module, datamodule=datamodule)
+    trainer.fit(module, datamodule=datamodule, ckpt_path=ckpt_path)
 
 
 if __name__ == "__main__":

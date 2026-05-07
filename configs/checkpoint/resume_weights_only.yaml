@@ -1,0 +1,5 @@
+mode: resume_weights_only
+path: null
+strict: true
+load_model: true
+load_asid_loss: true
